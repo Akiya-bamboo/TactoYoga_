@@ -1368,19 +1368,17 @@
 
         setStatus("登入頁面已開啟。正在準備語音登入。");
         setTranscript("（等待你說話）");
-
-        await speak(
-          `歡迎來到Tacto Yoga。目前有兩種登入模式。接下來：若已有帳號要登入，請在我說完後說「${WORD_START}」；若要註冊，請說「${WORD_REGISTER}」。若要刪除帳號，請說「刪除登入帳號」。說完請等待回覆。若沒有回應，請再說一次，或按下方的『啟動或重新啟動語音』。`,
-          "login_button_intro"
-        );
-
-        startListening({ auto: true });
+        // 平板端常會阻擋「非使用者互動」的音訊播放，因此不在 load 時自動播語音與啟動聆聽。
+        // 請使用者按下按鈕（btnStart）後再開始，確保 100% 出聲。
       });
 
       // 接收來自 Bridge 的控制訊號（例如：切換到練習畫面前，先把登入語音全部關閉）
       window.addEventListener("message", (event) => {
         if (event.data === "STOP_VOICE") {
           stopAllVoice();
+        }
+        if (event.data === "UNLOCK_AUDIO") {
+          try { window.audioPlayer?.unlockAudio?.(); } catch (_) {}
         }
       });
     </script>

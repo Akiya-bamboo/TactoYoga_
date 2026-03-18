@@ -836,6 +836,9 @@ window.addEventListener("load", () => {
     if (event.data === "START_POSE") {
       startPoseFlow();
     }
+    if (event.data === "UNLOCK_AUDIO") {
+      try { window.audioPlayer?.unlockAudio?.(); } catch (_) {}
+    }
   });
 
   // 開發模式：若是直接開啟此頁（不在 iframe 裡），可在數秒後自動啟動方便測試
