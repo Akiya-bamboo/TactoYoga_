@@ -752,9 +752,6 @@ async function startPoseFlow() {
   setStateLabel("準備開始拜日式");
   setHint("鏡頭即將啟動，如果你還沒站好位置，可以先調整一下。");
 
-  // NEW: 初始化提示（視障者重要）
-  try { window.audioPlayer?.setStatus?.("initializing"); } catch (_) {}
-
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ video: true });
     video.srcObject = stream;
@@ -811,10 +808,6 @@ async function startPoseFlow() {
     audioKey: "camera_1",
     text: "鏡頭已經準備好，接下來我會一步一步陪你完成一整套拜日式。如果你準備好了，就跟著我的引導慢慢來做瑜珈吧。",
   });
-
-  // NEW: 就緒提示（視障者重要）
-  try { window.audioPlayer?.setStatus?.("ready"); } catch (_) {}
-
   allowPoseCheck = true; // NEW：開場語音播放完成後才開始做姿勢檢測
 }
 

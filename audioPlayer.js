@@ -108,8 +108,6 @@
 
   const audioCache = {};
   let currentAudio = null;
-  let audioUnlocked = false;
-  let status = "idle"; // "idle" | "initializing" | "ready"
 
   // mode = 'audio'：使用音檔；mode = 'tts'：只用瀏覽器 TTS（備援或開發用）
   let mode = "audio";
@@ -125,10 +123,13 @@
     if (!url) return null;
     if (audioCache[key]) return audioCache[key];
     const audio = new Audio(url);
-    // 效能優化：不要全域預載，且在平板端減少初始頻寬佔用
-    audio.preload = "none";
+    audio.preload = "auto";
     audioCache[key] = audio;
     return audio;
+  }
+
+  function preloadAll() {
+    Object.keys(VOICE_MAP).forEach(preload);
   }
 
   function stopAll() {
@@ -157,49 +158,13 @@
     return new Promise((resolve) => {
       const u = new SpeechSynthesisUtterance(text);
       u.lang = "zh-TW";
-      u.rate = 0.9;
+      u.rate = 1.0;
       u.pitch = 1.0;
       u.volume = 1.0;
       u.onend = resolve;
       u.onerror = resolve;
       global.speechSynthesis.speak(u);
     });
-  }
-
-  /**
-   * NEW: 解鎖行動裝置自動播放限制（iOS/Android）
-   * - 請在「使用者點擊按鈕」事件中呼叫一次 unlockAudio()
-   */
-  async function unlockAudio() {
-    if (audioUnlocked) return true;
-    try {
-      const AudioCtx = global.AudioContext || global.webkitAudioContext;
-      if (!AudioCtx) return false;
-      const ctx = new AudioCtx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      gain.gain.value = 0.0;
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(0);
-      osc.stop(0.01);
-      if (ctx.state === "suspended") await ctx.resume();
-      audioUnlocked = true;
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  function setStatus(next) {
-    if (next !== "idle" && next !== "initializing" && next !== "ready") return;
-    if (status === next) return;
-    status = next;
-    if (next === "initializing") {
-      void speakTTS("系統正在啟動，請稍候");
-    } else if (next === "ready") {
-      void speakTTS("系統已就緒");
-    }
   }
 
   function pickRandom(arr) {
@@ -273,18 +238,10 @@
 
       try {
         audio.currentTime = 0;
-        const p = audio.play();
-        // 若播放被拒絕（常見於行動裝置未解鎖），或其他錯誤 → fallback TTS
-        if (p && typeof p.catch === "function") {
-          p.catch(() => {
-            onEnd();
-            if (fallbackText) void speakTTS(fallbackText);
-          });
-        }
+        void audio.play();
       } catch (_) {
         cleanup();
         resolve();
-        if (fallbackText) void speakTTS(fallbackText);
       }
     });
   }
@@ -299,14 +256,16 @@
     return mode;
   }
 
+  // 預先載入已定義的音檔，減少首次播放延遲
+  preloadAll();
+
   global.audioPlayer = {
     playVoice,
     playAudio,
     stopAll,
+    preloadAll,
     setMode,
     getMode,
-    unlockAudio,
-    setStatus,
   };
 
   // 方便直接呼叫：playVoice("prayer_start")
