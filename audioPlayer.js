@@ -207,43 +207,23 @@
     return arr[Math.floor(Math.random() * arr.length)];
   }
 
-  // NEW: 播放佇列（避免 guide 被 prompt 中斷；確保一次只播一段）
-  let playbackChain = Promise.resolve();
-  function enqueuePlayback(task) {
-    playbackChain = playbackChain.then(task, task);
-    return playbackChain;
-  }
-
-  function waitForEndedOrError(audio) {
-    return new Promise((resolve) => {
-      const done = () => {
-        audio.removeEventListener("ended", done);
-        audio.removeEventListener("error", done);
-        resolve();
-      };
-      audio.addEventListener("ended", done);
-      audio.addEventListener("error", done);
-    });
-  }
-
   /**
    * 統一入口：播放音檔（mp3/wav）或 fallback TTS。
    * - audioKey: string | null（例："prayer_1_prompt"）
    * - audioKeys: string[] | null（隨機播放其中一個）
    * - text: fallback TTS 文字（沒有音檔、或音檔播放失敗時使用）
    */
-  async function playAudio({ audioKey, audioKeys, text, interrupt = false } = {}) {
-    // 預設不 interrupt（避免導引語被短提示掐斷）；透過 queue 保證不重疊
-    return enqueuePlayback(async () => {
-      const key = audioKey || pickRandom(audioKeys);
+  async function playAudio({ audioKey, audioKeys, text, interrupt = true } = {}) {
+    const key = audioKey || pickRandom(audioKeys);
 
-      if (key) {
-        return await playVoice(key, { interrupt, fallbackText: text });
-      }
+    if (key) {
+      // 有 key：走音檔；若 key 沒有對應檔案，playVoice 會用 text 進行 TTS 備援
+      return await playVoice(key, { interrupt, fallbackText: text });
+    }
 
-      if (interrupt) stopAll();
-      return await speakTTS(text);
-    });
+    // 沒有 key：直接用 TTS（動態內容常見）
+    if (interrupt) stopAll();
+    return await speakTTS(text);
   }
 
   /**
@@ -251,45 +231,62 @@
    * - 會在播放前先停止上一段，避免重疊。
    * - 若找不到對應音檔，且提供 fallbackText，則使用 TTS 當備援。
    */
-  // NEW: Never Silent 版本（永遠 resolve；任何失敗立刻 fallback TTS 並回傳其 Promise）
   function playVoice(key, options) {
     const opts = options || {};
     const { interrupt = true, fallbackText } = opts;
-    const ttsText = fallbackText || key;
 
-    if (interrupt) stopAll();
+    if (interrupt) {
+      stopAll();
+    }
 
     if (mode === "tts") {
-      return speakTTS(ttsText);
+      return speakTTS(fallbackText || key);
     }
 
     const audio = preload(key);
     if (!audio) {
-      return speakTTS(ttsText);
+      // 沒有對應音檔時，用 TTS 備援（如果有文字）
+      if (fallbackText) {
+        return speakTTS(fallbackText);
+      }
+      return Promise.resolve();
     }
 
     currentAudio = audio;
 
-    return (async () => {
-      try {
-        // 平板環境有時需要 load 才能穩定開始播放
-        try { audio.load(); } catch (_) {}
-        audio.currentTime = 0;
-
-        const playResult = audio.play();
-        if (playResult && typeof playResult.catch === "function") {
-          await playResult;
+    return new Promise((resolve) => {
+      const onEnd = () => {
+        if (currentAudio === audio) {
+          currentAudio = null;
         }
+        cleanup();
+        resolve();
+      };
 
-        await waitForEndedOrError(audio);
-        if (currentAudio === audio) currentAudio = null;
-        return;
+      const cleanup = () => {
+        audio.removeEventListener("ended", onEnd);
+        audio.removeEventListener("error", onEnd);
+      };
+
+      audio.addEventListener("ended", onEnd);
+      audio.addEventListener("error", onEnd);
+
+      try {
+        audio.currentTime = 0;
+        const p = audio.play();
+        // 若播放被拒絕（常見於行動裝置未解鎖），或其他錯誤 → fallback TTS
+        if (p && typeof p.catch === "function") {
+          p.catch(() => {
+            onEnd();
+            if (fallbackText) void speakTTS(fallbackText);
+          });
+        }
       } catch (_) {
-        if (currentAudio === audio) currentAudio = null;
-        // 播放失敗（含 404 / NotAllowedError / 其他錯誤）→ 立刻 fallback TTS
-        return await speakTTS(ttsText);
+        cleanup();
+        resolve();
+        if (fallbackText) void speakTTS(fallbackText);
       }
-    })();
+    });
   }
 
   function setMode(newMode) {
