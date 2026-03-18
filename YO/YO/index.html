@@ -1349,6 +1349,8 @@
 
       // 使用者互動備援（滑鼠/觸控都可；不要求鍵盤輸入）
       btnStart.addEventListener("click", async () => {
+        // NEW: 行動裝置（iOS/Android）需要使用者互動解鎖音訊播放
+        try { await window.audioPlayer?.unlockAudio?.(); } catch (_) {}
         // 讓使用者知道「按了之後要做什麼」，並提醒說話時機
         await speak(
           `歡迎來到Tacto Yoga。若已有帳號要登入，請說「${WORD_START}」；若要註冊，請說「${WORD_REGISTER}」；若要刪除帳號，請說「刪除登入帳號」。說完請等待回覆。`,
