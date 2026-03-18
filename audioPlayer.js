@@ -3,7 +3,11 @@
 // /audio/prayer_start.mp3, /audio/down_dog_correction.mp3, /audio/encourage_good.mp3
 
 (function (global) {
-  const BASE_URL = "/audio/";
+  // GitHub Pages 會把網站掛在 /<repo>/ 下，若用 "/audio/" 會變成根網域 /audio/ 造成 404。
+  // 這裡改成「以 audioPlayer.js 自己的載入位置為基準」去找同層的 /audio/ 資料夾：
+  // e.g. https://user.github.io/repo/audioPlayer.js → https://user.github.io/repo/audio/
+  const SCRIPT_URL = (document.currentScript && document.currentScript.src) ? document.currentScript.src : document.baseURI;
+  const BASE_URL = new URL("./audio/", SCRIPT_URL).toString();
 
   /**
    * 將語音 key 對應到實際音檔檔名。
@@ -111,7 +115,7 @@
   function resolveUrl(key) {
     const file = VOICE_MAP[key];
     if (!file) return null;
-    return BASE_URL + file;
+    return new URL(file, BASE_URL).toString();
   }
 
   function preload(key) {
