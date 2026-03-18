@@ -7,8 +7,7 @@
 <style>
 body {
   margin: 0;
-  min-height: 100vh;
-  background-image: linear-gradient(to bottom,#f8ff9c 20%,#ffffff);
+  background: black;
 }
 
 iframe {
@@ -35,16 +34,10 @@ const yoFrame = document.getElementById("yoFrame");
 const poseFrame = document.getElementById("poseFrame");
 
 let poseLoaded = false;
-let audioUnlocked = false;
 
 poseFrame.addEventListener("load", () => {
   poseLoaded = true;
 });
-
-function sendUnlockAudio() {
-  try { yoFrame.contentWindow?.postMessage("UNLOCK_AUDIO", "*"); } catch (_) {}
-  try { poseFrame.contentWindow?.postMessage("UNLOCK_AUDIO", "*"); } catch (_) {}
-}
 
 function sendStartPose() {
   try {
@@ -65,25 +58,15 @@ function switchToPose(reason) {
 
   // 只有在 Pose iframe 準備好之後，才送出 START_POSE 讓它啟動鏡頭與 MediaPipe
   if (poseLoaded) {
-    if (audioUnlocked) sendUnlockAudio();
     sendStartPose();
   } else {
     const handler = () => {
       poseFrame.removeEventListener("load", handler);
-      if (audioUnlocked) sendUnlockAudio();
       sendStartPose();
     };
     poseFrame.addEventListener("load", handler);
   }
 }
-
-// NEW: 平板端必須先有使用者互動，才能解鎖音訊播放。
-// 任何一次觸控/點擊都會同步通知 YO/TRY iframe 解鎖（UNLOCK_AUDIO）。
-window.addEventListener("pointerdown", () => {
-  if (audioUnlocked) return;
-  audioUnlocked = true;
-  sendUnlockAudio();
-}, { once: true });
 
 /* ===== 手動測試 ===== */
 window.addEventListener("keydown", e => {
@@ -102,4 +85,3 @@ window.addEventListener("message", event => {
 
 </body>
 </html>
-
