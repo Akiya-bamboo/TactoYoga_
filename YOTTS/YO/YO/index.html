@@ -1,0 +1,1388 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>瑜珈輔助 App（語音登入示範）</title>
+    <style>
+      :root {
+        --bg: #0a0a0a;
+        --card: #1a1a1a;
+        --text: #ffffff;
+        --muted: rgba(255, 255, 255, 0.72);
+        --border: rgba(255, 255, 255, 0.22);
+        --accent: #f5ec57; /* 檸檬黃 */
+        --primary: #f5ec57; /* 主按鈕） */
+        --primaryText: #0a0a0a;
+        --glow: 0 0 15px rgba(245, 236, 87, 0.25);
+        --radius-lg: 34px;
+        --radius-md: 24px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans TC", Arial, sans-serif;
+        line-height: 1.55;
+      }
+
+      /* 底部小標籤（不改 HTML，用 pseudo-element 產生） */
+      body::after {
+        content: "TACTO YOGA";
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 14px;
+        text-align: center;
+        font-size: 12px;
+        letter-spacing: 0.22em;
+        color: rgba(255, 255, 255, 0.35);
+        pointer-events: none;
+      }
+
+      main {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 28px 20px 56px;
+      }
+
+      .card {
+        width: min(720px, 100%);
+        padding: 28px;
+        border-radius: var(--radius-lg);
+        background: var(--card);
+        border: 2px solid var(--border);
+        box-shadow: var(--glow);
+      }
+
+      h1 {
+        margin: 0 0 14px 0;
+        font-size: 28px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+      }
+
+      p {
+        margin: 10px 0;
+      }
+
+      .muted {
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      button {
+        width: 100%;
+        margin-top: 14px;
+        padding: 16px 18px;
+        border-radius: 26px; /* 圓角矩形（20–30px） */
+        border: 2px solid rgba(255, 255, 255, 0.15);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        box-shadow: var(--glow);
+      }
+
+      /* 主按鈕：Start/Next 風格 */
+      #btnStart {
+        background: var(--primary);
+        color: var(--primaryText);
+        border-color: rgba(0, 0, 0, 0.2);
+      }
+
+      button:focus {
+        outline: 3px solid var(--accent);
+        outline-offset: 3px;
+      }
+
+      .sr-only {
+        position: absolute !important;
+        width: 1px !important;
+        height: 1px !important;
+        padding: 0 !important;
+        margin: -1px !important;
+        overflow: hidden !important;
+        clip: rect(0, 0, 0, 0) !important;
+        white-space: nowrap !important;
+        border: 0 !important;
+      }
+
+      .status {
+        margin-top: 14px;
+        padding: 14px 16px;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      #userListSection {
+        margin-top: 14px;
+      }
+
+      #userList {
+        list-style: none;
+        padding: 0;
+        margin: 10px 0 0 0;
+      }
+
+      #userList li {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      }
+
+      #userList li:last-child {
+        border-bottom: none;
+      }
+
+      .user-delete {
+        padding: 10px 14px;
+        font-size: 14px;
+        border-radius: 22px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        cursor: pointer;
+      }
+
+      .user-delete:disabled,
+      .user-delete.protected {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      @media (max-width: 480px) {
+        .card {
+          padding: 22px;
+          border-radius: 30px;
+        }
+        h1 {
+          font-size: 24px;
+        }
+        button {
+          font-size: 16px;
+        }
+      }
+    </style>
+    <script src="../../audioPlayer.js"></script>
+  </head>
+  <body>
+    <main>
+      <section class="card" aria-labelledby="app-title">
+        <h1 id="app-title">Tacto Yoga 視障者瑜珈</h1>
+
+        <!--
+          視障者主要依賴語音與螢幕閱讀器：
+          - 這個區塊用 aria-live 讓螢幕閱讀器能自動朗讀狀態文字
+          - 同時我們也會用 SpeechSynthesis 主動語音回饋
+        -->
+        
+        <div id="live" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
+
+        <p class="muted">
+          操作說明：本頁會自動提示並嘗試開始聆聽。請先說「開始」進入登入流程；若你已註冊，接著說出暱稱登入；若未註冊，系統會用語音帶你完成註冊。若你沒有聽到正在聆聽的提示，請按下方按鈕再說一次。
+        </p>
+
+        <!-- 部分瀏覽器需要使用者互動才能啟動麥克風/語音辨識，所以保留一顆按鈕作為保險 -->
+        <button id="btnStart" type="button">
+          啟動或重新啟動語音（需要時請按）
+        </button>
+
+        <div class="status" aria-label="狀態資訊（視覺輔助用）">
+          <p><strong>狀態：</strong><span id="statusText">初始化中…</span></p>
+          <p><strong>辨識內容：</strong><span id="transcriptText">（尚未開始）</span></p>
+        </div>
+
+        <div id="userListSection" class="status" aria-label="帳號列表">
+          <p><strong>帳號列表</strong></p>
+          <ul id="userList"></ul>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      /**
+       * 視障友善重點（本頁主打全盲語音操作）：
+       * - 進頁即語音提示（SpeechSynthesis）
+       * - 使用 Web Speech API 語音辨識（SpeechRecognition / webkitSpeechRecognition）
+       * - 先說「開始」進入登入流程
+       * - 已註冊：用「暱稱」作為登入識別，登入後語音回饋上次瑜珈進度
+       * - 未註冊：進入「語音註冊流程」
+       * - 註冊依序蒐集：暱稱、身高（公分）、體重（公斤）
+       * - 每一步都會語音重複確認，使用者說「確認」或「重來」決定前進或重說
+       * - 使用者資料以 localStorage 持久儲存；預設帳號「小安」不可刪除；支援語音「刪除登入帳號」
+       */
+
+       /* 宣告 */
+      const LANG = "zh-TW";
+      const WORD_START = "開始";
+      const WORD_REGISTER = "註冊";
+      const WORD_CONFIRM = "確認";
+      const WORD_RETRY = "重來";
+      const WORD_DONE = "完成";
+
+      const PHASE = {
+        GATE: "gate",//門
+        NICKNAME_LOGIN: "nickname_login",//暱稱登入
+        REGISTER: "register",//登記/註冊
+        LOGGED_IN: "logged_in",//登入
+        COURSE_PREP: "course_prep",//課程準備
+        DELETE_ACCOUNT_ASK_NICKNAME: "delete_account_ask_nickname",//語音刪除：等待說出暱稱
+      };
+
+      // ===== 使用者持久化（localStorage；未來可改為呼叫後端 API 做雲端帳號／多裝置同步）=====
+      const STORAGE_KEY_USERS = "tacto_yoga_users";
+      const DEFAULT_NICKNAME = "小安";
+
+      const defaultUserPayload = {
+        nickname: DEFAULT_NICKNAME,
+        heightCm: 165,
+        weightKg: 55,
+        lastYogaProgressText: "第 2 套瑜珈動作",
+        // NEW: 進度語音音檔 key（優先播 mp3；無音檔才用 TTS 念文字）
+        lastYogaProgressAudio: "progress_2",
+        isDefault: true,
+      };
+
+      function loadUsersFromStorage() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY_USERS);
+          if (!raw) return null;
+          const data = JSON.parse(raw);
+          if (!data || typeof data !== "object") return null;
+          return data;
+        } catch (_) {
+          return null;
+        }
+      }
+
+      function saveUsersToStorage(users) {
+        try {
+          localStorage.setItem(STORAGE_KEY_USERS, JSON.stringify(users));
+          return true;
+        } catch (_) {
+          return false;
+        }
+      }
+
+      // NEW: 資料升級（向下相容舊版 localStorage，補齊新增欄位）
+      function inferProgressAudioKey(progressText) {
+        const s = String(progressText || "");
+        if (s.includes("第 2") || s.includes("第二")) return "progress_2";
+        if (s.includes("第 1") || s.includes("第一")) return "progress_1";
+        return null;
+      }
+
+      function normalizeUsers(users) {
+        let changed = false;
+        const u = users && typeof users === "object" ? users : {};
+
+        // 確保預設帳號存在且不可刪
+        if (!u[DEFAULT_NICKNAME]) {
+          u[DEFAULT_NICKNAME] = { ...defaultUserPayload };
+          changed = true;
+        } else {
+          if (u[DEFAULT_NICKNAME].isDefault !== true) {
+            u[DEFAULT_NICKNAME].isDefault = true;
+            changed = true;
+          }
+          // 預設帳號若缺欄位，補齊
+          if (!u[DEFAULT_NICKNAME].lastYogaProgressAudio) {
+            u[DEFAULT_NICKNAME].lastYogaProgressAudio =
+              inferProgressAudioKey(u[DEFAULT_NICKNAME].lastYogaProgressText) || defaultUserPayload.lastYogaProgressAudio;
+            changed = true;
+          }
+        }
+
+        // 為所有使用者補齊 lastYogaProgressAudio（舊資料常缺）
+        for (const key of Object.keys(u)) {
+          const rec = u[key];
+          if (!rec || typeof rec !== "object") continue;
+          if (rec.lastYogaProgressAudio == null) {
+            const inferred = inferProgressAudioKey(rec.lastYogaProgressText);
+            if (inferred) {
+              rec.lastYogaProgressAudio = inferred;
+              changed = true;
+            }
+          }
+        }
+
+        if (changed) saveUsersToStorage(u);
+        return u;
+      }
+
+      /** 取得目前所有使用者（若為空則先寫入預設使用者「小安」） */
+      function getUsers() {
+        let users = loadUsersFromStorage();
+        if (!users || Object.keys(users).length === 0) {
+          users = { [DEFAULT_NICKNAME]: { ...defaultUserPayload } };
+          saveUsersToStorage(users);
+        } else {
+          users = normalizeUsers(users);
+        }
+        return users;
+      }
+
+      /** 新增或更新使用者（與預設使用者結構一致；未來可擴充 sync 到雲端） */
+      function addUser(user) {
+        const users = getUsers();
+        const record = {
+          nickname: user.nickname,
+          heightCm: user.heightCm ?? null,
+          weightKg: user.weightKg ?? null,
+          lastYogaProgressText: user.lastYogaProgressText ?? "第 1 套瑜珈動作（尚未開始）",
+          // NEW: 與預設使用者結構一致
+          lastYogaProgressAudio: user.lastYogaProgressAudio ?? null,
+        };
+        if (user.nickname === DEFAULT_NICKNAME) record.isDefault = true;
+        users[user.nickname] = record;
+        saveUsersToStorage(users);
+      }
+
+      /** 刪除使用者。預設帳號不可刪；不可刪到剩 0 個。回傳 true 表示已刪除。 */
+      function removeUser(nickname) {
+        const key = String(nickname || "").trim();
+        if (!key) return false;
+        const users = getUsers();
+        if (users[key] && users[key].isDefault) return false;
+        if (!users[key]) return false;
+        if (Object.keys(users).length <= 1) return false;
+        delete users[key];
+        saveUsersToStorage(users);
+        return true;
+      }
+      //是否允許刪除（非預設且不只一筆）
+      function canDeleteUser(nickname) {
+        const users = getUsers();
+        if (users[nickname] && users[nickname].isDefault) return false;
+        return Object.keys(users).length > 1;
+      }
+
+      /**
+       * 課前概述與準備步驟（集中於此，方便日後修改）
+       * - overview：本次課程前情概述（節奏、時長、主要身體部位）
+       * - steps：環境與身體準備步驟，每步說完後等使用者說「完成」再下一步
+       */
+      const coursePrepHints = {
+        overview: {
+          // NEW: 課前概述音檔（有音檔就播，沒有才用 overviewText 的 TTS）
+          overviewAudio: "lesson_top",
+          rhythm: "緩慢、基礎",
+          rhythmLabel: "本次課程節奏為緩慢、基礎。",
+          duration: "約 20 分鐘",
+          durationLabel: "課程時長約 20 分鐘。",
+          bodyParts: ["背部", "腿部", "核心"],
+          bodyPartsLabel: "主要會使用到背部、腿部和核心。",
+        },
+        steps: [
+          {
+            id: "mat",
+            label: "鋪好瑜珈墊",
+            script: "請先將瑜珈墊鋪放在平坦、安全的空間，然後手部觸摸到瑜珈墊上左側拉繩的部分向外拉開瑜珈墊。完成後請說「完成」。",
+          },
+          {
+            id: "accessories",//配件
+            label: "放置輔助產品",
+            script: "請檢查瑜珈墊上十字中心線上周圍的方向引導點是否朝向前方， 並檢查您的平衡輔助桿以及喇叭鏡頭在瑜珈墊右側的部分；檢查後請說「完成」。",
+          },
+          {
+            id: "posture",//姿勢
+            label: "調整站立或坐姿",
+            script: "請找到瑜珈墊上的中心定位點位置，雙腳穩踏地面，背部放鬆。完成後請說「完成」。",
+          },
+        ],
+      };//coursePrepHints=課程準備提示
+
+      const STAGE = {
+        NICKNAME_INPUT: "nickname_input",//暱稱輸入
+        NICKNAME_CONFIRM: "nickname_confirm",//暱稱確認
+        HEIGHT_INPUT: "height_input",//身高輸入
+        HEIGHT_CONFIRM: "height_confirm",//身高確認
+        WEIGHT_INPUT: "weight_input",//體重輸入
+        WEIGHT_CONFIRM: "weight_confirm",//體重確認
+        DONE: "done",
+      };
+
+      const btnStart = document.getElementById("btnStart");
+      const statusText = document.getElementById("statusText");
+      const transcriptText = document.getElementById("transcriptText");
+      const live = document.getElementById("live");
+
+      let recognition = null;
+      let isListening = false;
+      let isSpeaking = false;
+      let expectListening = false; // 用來判斷 onend 是否要自動重啟聆聽
+
+      let appPhase = PHASE.GATE;
+      let regStage = STAGE.NICKNAME_INPUT;
+      let pendingValue = null; // 暫存本步輸入，待「確認」後才寫入 profile
+
+      // 課前準備流程：overview → step0 → step1 → step2 → done
+      let coursePrepStep = "overview"; // "overview" | "mat" | "accessories" | "posture" | "done"
+
+      let currentUser = null;
+
+      // 註冊資料（不做永久儲存）
+      const profile = {
+        nickname: "",
+        heightCm: null,
+        weightKg: null,
+      };
+
+      function setStatus(text) {
+        statusText.textContent = text;
+        // 讓螢幕閱讀器也能讀到狀態更新
+        live.textContent = text;
+      }
+
+      function setTranscript(text) {
+        transcriptText.textContent = text || "（無）";
+      }
+
+      function renderUserList() {
+        const ul = document.getElementById("userList");
+        if (!ul) return;
+        const users = getUsers();
+        const keys = Object.keys(users);
+        ul.innerHTML = "";
+        keys.forEach((key) => {
+          const u = users[key];
+          const li = document.createElement("li");
+          const label = document.createElement("span");
+          label.textContent = u.nickname + (u.isDefault ? "（預設帳號）" : "");
+          li.appendChild(label);
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "user-delete";
+          btn.textContent = "刪除";
+          btn.setAttribute("aria-label", `刪除帳號 ${u.nickname}`);
+          if (!canDeleteUser(key)) {
+            btn.disabled = true;
+            if (u.isDefault) btn.classList.add("protected");
+          } else {
+            btn.addEventListener("click", () => {
+              if (removeUser(key)) {
+                renderUserList();
+                setStatus(`已刪除帳號 ${key}。`);
+                void speak(`已刪除帳號 ${key}。`);
+              }
+            });
+          }
+          li.appendChild(btn);
+          ul.appendChild(li);
+        });
+      }
+
+      function normalize(text) {
+        return (text || "").replace(/\s+/g, "").trim();
+      }
+
+      function supportsSpeechRecognition() {
+        return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+      }
+
+      /**
+       * 統一語音輸出：
+       * - 若提供 key 且有 audioPlayer，優先播放 mp3錄音，並以 text 作為 TTS 備援
+       * - 若未提供 key 或沒有 audioPlayer，退回瀏覽器 SpeechSynthesis
+       */
+      // TTS 參數：接近預錄音檔風格，方便動態內容（暱稱、身高、體重等）與音檔聲線一致
+      const TTS_OPTIONS = {
+        lang: "zh-TW",
+        rate: 0.70,   // 稍慢，不要太快
+        pitch: 0.50,   //音高
+        volume: 0.85, //音量
+      };
+
+      let cachedPreferredVoice = null;
+
+      function getPreferredVoice() {
+        if (cachedPreferredVoice) return cachedPreferredVoice;
+        const voices = window.speechSynthesis.getVoices();
+        const zhTW = voices.find((v) => v.lang === "zh-TW" || v.lang.startsWith("zh-TW"));
+        if (zhTW) {
+          cachedPreferredVoice = zhTW;
+          return zhTW;
+        }
+        const zh = voices.find((v) => v.lang.startsWith("zh"));
+        if (zh) {
+          cachedPreferredVoice = zh;
+          return zh;
+        }
+        return null;
+      }
+
+      // 部分瀏覽器需在 voiceschanged 後才有語音清單，預先觸發並快取 zh-TW
+      if (window.speechSynthesis) {
+        window.speechSynthesis.getVoices(); // 觸發非同步載入
+        window.speechSynthesis.onvoiceschanged = () => {
+          getPreferredVoice();
+        };
+      }
+
+      function speak(text, key) {
+        // 若有指定 key 且已載入 audioPlayer，優先走錄音檔
+        if (key && window.audioPlayer && typeof window.playVoice === "function") {
+          isSpeaking = true;
+          return window.playVoice(key, { fallbackText: text }).finally(() => {
+            isSpeaking = false;
+          });
+        }
+
+        // 動態內容無音檔，使用 TTS；取消佇列中尚未朗讀的內容，避免堆疊
+        window.speechSynthesis.cancel();
+
+        return new Promise((resolve) => {
+          const utter = new SpeechSynthesisUtterance(text);
+          utter.lang = TTS_OPTIONS.lang;
+          utter.rate = TTS_OPTIONS.rate;
+          utter.pitch = TTS_OPTIONS.pitch;
+          utter.volume = TTS_OPTIONS.volume;
+
+          const voice = getPreferredVoice();
+          if (voice) utter.voice = voice;
+
+          utter.onstart = () => {
+            isSpeaking = true;
+          };
+          utter.onend = () => {
+            isSpeaking = false;
+            resolve();
+          };
+          utter.onerror = () => {
+            isSpeaking = false;
+            resolve();
+          };
+
+          window.speechSynthesis.speak(utter);
+        });
+      }
+
+      function stopListening() {
+        expectListening = false;
+        try {
+          recognition?.stop();
+        } catch (_) {}
+        try {
+          recognition?.abort();
+        } catch (_) {}
+      }
+
+      // 給外層 Bridge 呼叫用：完全停止本頁的語音與聆聽，避免和練習階段重疊
+      function stopAllVoice() {
+        try {
+          stopListening();
+        } catch (_) {}
+        try {
+          window.speechSynthesis.cancel();
+        } catch (_) {}
+        try {
+          window.audioPlayer?.stopAll();
+        } catch (_) {}
+        isSpeaking = false;
+      }
+
+      function hasRegisteredUsers() {
+        return Object.keys(getUsers()).length > 0;
+      }
+
+      function getListeningHint() {
+        if (appPhase === PHASE.GATE) {
+          return `下一步：請說「${WORD_START}」登入，或說「${WORD_REGISTER}」開始註冊；若要刪除帳號，請說「刪除登入帳號」。`;
+        }
+        if (appPhase === PHASE.NICKNAME_LOGIN) {
+          return "下一步：請說出你的暱稱。";
+        }
+        if (appPhase === PHASE.COURSE_PREP) {
+          return `下一步：請說「${WORD_DONE}」進入下一步。`;
+        }
+        if (appPhase === PHASE.DELETE_ACCOUNT_ASK_NICKNAME) {
+          return "請說出要刪除的帳號暱稱。";
+        }
+        if (appPhase === PHASE.REGISTER) {
+          switch (regStage) {
+            case STAGE.NICKNAME_INPUT:
+              return "下一步：請說你的暱稱。";
+            case STAGE.NICKNAME_CONFIRM:
+              return `下一步：請說「${WORD_CONFIRM}」或「${WORD_RETRY}」。`;
+            case STAGE.HEIGHT_INPUT:
+              return "下一步：請說你的身高，單位公分。";
+            case STAGE.HEIGHT_CONFIRM:
+              return `下一步：請說「${WORD_CONFIRM}」或「${WORD_RETRY}」。`;
+            case STAGE.WEIGHT_INPUT:
+              return "下一步：請說你的體重，單位公斤。";
+            case STAGE.WEIGHT_CONFIRM:
+              return `下一步：請說「${WORD_CONFIRM}」或「${WORD_RETRY}」。`;
+            default:
+              return "下一步：請說話。";
+          }
+        }
+        return "下一步：請稍等。";
+      }
+
+      function createRecognition() {
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const r = new SR();
+        r.lang = LANG;
+        r.continuous = false; // 一句一句辨識，比較穩定
+        r.interimResults = true; // 先給暫時結果，使用者感覺更即時
+        r.maxAlternatives = 1;
+
+        r.onstart = () => {
+          isListening = true;
+          setStatus(`正在聆聽。${getListeningHint()}說完請等待回覆。`);
+        };
+
+        r.onresult = (event) => {
+          // 同時顯示 interim 與 final（final 出現時才真正進入流程判斷）
+          let interimText = "";
+          let finalText = "";
+
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const t = event.results[i][0].transcript;
+            if (event.results[i].isFinal) finalText += t;
+            else interimText += t;
+          }
+
+          const display = (finalText || interimText).trim();
+          if (display) setTranscript(display);
+
+          if (finalText) {
+            // 收到 final 後，交由狀態機處理（避免 onend 自動重啟干擾）
+            expectListening = false;
+            void handleFinalTranscript(finalText.trim());
+          }
+        };
+
+        r.onerror = (event) => {
+          isListening = false;
+          expectListening = false;
+
+          // 常見錯誤：not-allowed（權限拒絕）、audio-capture（找不到麥克風）、no-speech（沒收到聲音）
+          const code = event.error || "unknown";
+          setStatus(`語音辨識發生問題（${code}）。`);
+
+          if (code === "not-allowed" || code === "service-not-allowed") {
+            void speak(
+              "我無法使用麥克風，可能尚未允許權限。接下來：請允許此網站使用麥克風。允許後回到本頁，按一下『啟動語音登入』，我會再次開始聆聽。完成前你不需要再說話。"
+            );
+          } else if (code === "audio-capture") {
+            void speak(
+              "我沒有偵測到麥克風裝置。接下來：請確認麥克風已連接並在系統中啟用。完成後回到本頁，按一下『啟動語音登入』再試。"
+            );
+          } else if (code === "no-speech") {
+            void (async () => {
+              await speak(`我沒有聽到聲音。我會再次開始聆聽。接下來：請再說一次。說完請等待回覆。`,"login_button_intro");
+              startListening({ auto: true });
+            })();
+          } else {
+            void speak("語音辨識暫時無法使用。接下來：請稍等一下，再按『啟動語音登入』重試。");
+          }
+        };
+
+        r.onend = () => {
+          isListening = false;
+
+          // 若目前流程期待正在聆聽，則自動重啟（登入後等「開始」、課前準備等「完成」等）
+          if (expectListening && !isSpeaking) {
+            window.setTimeout(() => {
+              if (expectListening && !isListening && !isSpeaking) {
+                startListening({ auto: true });
+              }
+            }, 450);
+          }
+        };
+
+        return r;
+      }
+
+      function startListening({ auto }) {
+        if (!supportsSpeechRecognition()) {
+          setStatus("此瀏覽器不支援語音辨識。");
+          void speak(
+            "此瀏覽器不支援語音辨識。接下來：請改用 Chrome 或 Edge 重新開啟本頁，才能以語音操作。"
+          );
+          return;
+        }
+        if (isListening || isSpeaking) return;
+
+        try {
+          if (!recognition) recognition = createRecognition();
+          expectListening = true;
+          recognition.start();
+
+          // 手動啟動時，額外用語音提醒使用者現在可以說話
+          if (!auto) {
+            void speak(`我已開始聆聽。${getListeningHint()}說完請等待回覆。`);
+          }
+        } catch (_) {
+          expectListening = false;
+          setStatus("尚未開始聆聽。可能需要先按『啟動語音登入』。");
+          if (auto) {
+            void speak(
+              //"我目前無法自動開始聆聽。接下來：請按一下『啟動語音登入』。按下後我會開始聽，你再回答問題。"
+            );
+          }
+        }
+      }
+
+      // ---- 數字解析（支援 175 / 一百七十五 / 一七五 / 六十五點五）----
+      function parseNumber(raw) {
+        const cleaned = normalize(raw)
+          .replace(/[，,]/g, "")
+          .replace(/公分|厘米|cm|公尺|公斤|千克|kg/gi, "")
+          .replace(/點/g, ".");
+
+        const m = cleaned.match(/-?\d+(\.\d+)?/);
+        if (m) return Number.parseFloat(m[0]);
+
+        return parseChineseNumber(cleaned);
+      }
+
+      function parseChineseNumber(s) {
+        const map = { 零: 0, 〇: 0, 一: 1, 二: 2, 兩: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+        if (!s) return null;
+
+        const allowed = s.replace(/[^零〇一二兩三四五六七八九十百\.]/g, "");
+        if (!allowed) return null;
+
+        const parts = allowed.split(".");
+        const intPart = parseChineseInteger(parts[0], map);
+        if (intPart === null) return null;
+        if (parts.length === 1) return intPart;
+
+        const frac = parts[1] || "";
+        if (!frac) return intPart;
+
+        let fracDigits = "";
+        for (const ch of frac) {
+          if (map[ch] === undefined) return null;
+          fracDigits += String(map[ch]);
+        }
+
+        return Number.parseFloat(`${intPart}.${fracDigits}`);
+      }
+
+      function parseChineseInteger(s, map) {
+        if (!s) return null;
+
+        if (s.includes("百") || s.includes("十")) {
+          let total = 0;
+          let rest = s;
+
+          if (rest.includes("百")) {
+            const [a, b] = rest.split("百");
+            const hundred = a ? map[a] : 1;
+            if (hundred === undefined) return null;
+            total += hundred * 100;
+            rest = b;
+          }
+
+          if (rest.includes("十")) {
+            const [a, b] = rest.split("十");
+            const ten = a ? map[a] : 1;
+            if (ten === undefined) return null;
+            total += ten * 10;
+            rest = b;
+          }
+
+          if (rest) {
+            let digits = "";
+            for (const ch of rest) {
+              if (map[ch] === undefined) return null;
+              digits += String(map[ch]);
+            }
+            total += digits ? Number.parseInt(digits, 10) : 0;
+          }
+
+          return total;
+        }
+
+        // 沒有 十/百 時，視為逐字數字拼接（例如：一七五 → 175）
+        let digits = "";
+        for (const ch of s) {
+          if (map[ch] === undefined) return null;
+          digits += String(map[ch]);
+        }
+        return digits ? Number.parseInt(digits, 10) : null;
+      }
+
+      // ---- 狀態機：開始口令 →（暱稱登入 或 註冊）----
+      async function handleFinalTranscript(raw) {
+        stopListening();
+
+        const normalized = normalize(raw);
+
+        // 入口：說「開始」進入暱稱登入；說「註冊」進入註冊；說「刪除登入帳號」進入語音刪除
+        if (appPhase === PHASE.GATE) {
+          if (normalized.includes(WORD_START)) {
+            await proceedAfterStart();
+            return;
+          }
+          if (normalized.includes(WORD_REGISTER)) {
+            await startRegistrationFlow();
+            return;
+          }
+          if (normalized.includes("刪除") && normalized.includes("帳號")) {
+            appPhase = PHASE.DELETE_ACCOUNT_ASK_NICKNAME;
+            setStatus("請說出要刪除的帳號暱稱。");
+            setTranscript(raw);
+            await speak(`請說出要刪除的帳號暱稱。`,"login_deletename_intro");
+            startListening({ auto: true });
+            return;
+          }
+
+          setStatus(`等待你說「${WORD_START}」或「${WORD_REGISTER}」。`);
+          setTranscript(raw);
+          await speak(
+            `我聽到的是`,"login_listen_intro"
+          );
+          await speak(
+            `「${raw}」`
+          );
+          await speak(
+            `若要登入，請說「${WORD_START}」；若要註冊，請說「${WORD_REGISTER}」。請再說一次，然後等待回覆。`,"login_button_intro"
+          );
+          startListening({ auto: true });
+          return;
+        }
+
+        // 語音刪除：使用者已說「刪除登入帳號」，現在說出要刪除的暱稱
+        if (appPhase === PHASE.DELETE_ACCOUNT_ASK_NICKNAME) {
+          await handleDeleteAccountByVoice(raw, normalized);
+          return;
+        }
+
+        // 已註冊：暱稱登入
+        if (appPhase === PHASE.NICKNAME_LOGIN) {
+          await handleNicknameLogin(raw, normalized);
+          return;
+        }
+
+        // 未註冊：語音註冊
+        if (appPhase === PHASE.REGISTER) {
+          await handleRegister(raw, normalized);
+          return;
+        }
+
+        // 已登入：說「開始」進入課前準備
+        if (appPhase === PHASE.LOGGED_IN) {
+          if (normalized.includes(WORD_START)) {
+            await startCoursePrepFlow();
+            return;
+          }
+          setStatus("請說「開始」進行課前準備。");
+          setTranscript(raw);
+          await speak(
+            `我聽到的是`,"login_listen_intro"
+          );
+           await speak(
+            `「${raw}」`
+          ); await speak(
+            `若要進行課前準備，請說「${WORD_START}」。然後等待回覆。`,"login_classprepare_intro"
+          );
+          startListening({ auto: true });
+          return;
+        }
+
+        // 課前準備：說「完成」進入下一步
+        if (appPhase === PHASE.COURSE_PREP) {
+          await handleCoursePrepTranscript(raw, normalized);
+        }
+      }
+
+      async function handleDeleteAccountByVoice(raw, normalized) {
+        const cand = normalize(extractNicknameCandidate(raw));
+        if (!cand) {
+          setStatus("未聽清楚暱稱。");
+          await speak("我沒有聽清楚要刪除的帳號暱稱。請再說一次。然後等待回覆。","login_nolistenname_intro");
+          startListening({ auto: true });
+          return;
+        }
+        const users = getUsers();
+        let targetKey = null;
+        for (const key of Object.keys(users)) {
+          const nk = normalize(key);
+          if (cand === nk || cand.includes(nk) || nk.includes(cand)) {
+            targetKey = key;
+            break;
+          }
+        }
+        if (!targetKey) {
+          setStatus("找不到該帳號。");
+          await speak(`找不到該帳號。`,"login_nosign_intro");
+          appPhase = PHASE.GATE;
+          renderUserList();
+          startListening({ auto: true });
+          return;
+        }
+        if (!canDeleteUser(targetKey)) {
+          setStatus("此帳號不可刪除（預設帳號或僅剩此帳號）。");
+          await speak(`此帳號不可刪除。可能是預設帳號，或是目前只剩這一個帳號。`,"login_nosign_intro");
+          appPhase = PHASE.GATE;
+          startListening({ auto: true });
+          return;
+        }
+        const removed = removeUser(targetKey);
+        if (removed) {
+          setStatus(`已刪除帳號 ${targetKey}。`);
+          await speak(`已刪除帳號`,"login_deleteok_intro");
+          await speak(` ${targetKey}。`);
+        } else {
+          setStatus("刪除失敗。");
+          await speak(`刪除失敗，請再試一次。`,"login_deletenono_intro");
+        }
+        appPhase = PHASE.GATE;
+        renderUserList();
+        startListening({ auto: true });
+      }
+
+      async function proceedAfterStart() {
+        setTranscript(`偵測到關鍵字：${WORD_START}`);
+
+        if (hasRegisteredUsers()) {
+          appPhase = PHASE.NICKNAME_LOGIN;
+          setStatus("已進入暱稱登入。");
+          await promptNicknameLogin();
+          return;
+        }
+
+        // 若沒有任何已註冊使用者，提示使用者改說「註冊」進入註冊流程
+        appPhase = PHASE.GATE;
+        setStatus(`尚未有註冊資料。你可以開始註冊。`);
+        await speak(
+          `目前沒有已註冊的使用者。若要建立新資料，請在我說完後說「${WORD_REGISTER}」。說完請等待回覆。`
+        );
+        startListening({ auto: true });
+      }
+
+      async function startRegistrationFlow() {
+        appPhase = PHASE.REGISTER;
+        regStage = STAGE.NICKNAME_INPUT;
+        pendingValue = null;
+        profile.nickname = "";
+        profile.heightCm = null;
+        profile.weightKg = null;
+
+        setStatus("尚未註冊。接下來：開始語音註冊。");
+        await speak(
+          `你尚未註冊。接下來開始註冊。你將依序提供暱稱、身高（公分）、體重（公斤）。每一步我會重複一次你剛剛說的內容。正確請說「${WORD_CONFIRM}」，重來請說「${WORD_RETRY}」。我說完後你再回答。`,
+          "login_sign_intro"
+        );
+
+        await promptRegisterStage();
+      }
+
+      function extractNicknameCandidate(raw) {
+        // 允許使用者說「我是小安」、「我叫小安」、「暱稱是小安」等
+        let s = (raw || "").trim();
+        s = s.replace(/[，,。\.！!？?\s]/g, "");
+        s = s.replace(/^(我是|我叫|叫|暱稱是|我的暱稱是)/, "");
+        return s;
+      }
+
+      function findUserByNickname(raw) {
+        const cand = normalize(extractNicknameCandidate(raw));
+        if (!cand) return null;
+        const users = getUsers();
+        for (const key of Object.keys(users)) {
+          const nk = normalize(key);
+          if (cand === nk || cand.includes(nk)) return users[key];
+        }
+        return null;
+      }
+
+      async function promptNicknameLogin() {
+        setTranscript("（等待你說話）");
+        setStatus("暱稱登入。");
+
+        const exampleNick = Object.keys(getUsers())[0] || DEFAULT_NICKNAME;
+        await speak(
+          `請說出你的暱稱登入。例如`,"login_talkname_intro"
+        );
+         await speak(
+          `「${exampleNick}」。`
+        );
+         await speak(
+          `說完請等待回覆。`,"login_talkwait_intro"
+        );
+        startListening({ auto: true });
+      }
+
+      async function handleNicknameLogin(raw, normalized) {
+        // 允許說「重來」來重新說暱稱
+        if (normalized.includes(WORD_RETRY)) {
+          setStatus("好的，請重新說暱稱。");
+          await speak(`好的。請重新說一次你的暱稱。然後等待回覆。`,"");
+          startListening({ auto: true });
+          return;
+        }
+
+        const user = findUserByNickname(raw);
+        if (!user) {
+          setStatus("找不到相符的暱稱。");
+          await speak(`我沒有找到相符的暱稱。接下來：請再說一次你的暱稱。說完請等待回覆。`,"login_wherename_intro");
+          startListening({ auto: true });
+          return;
+        }
+
+        await loginWithUser(user);
+      }
+
+      async function loginWithUser(user) {
+        appPhase = PHASE.LOGGED_IN;
+        currentUser = user;
+        stopListening();
+
+        const progressText = user.lastYogaProgressText || "第一套瑜珈動作";
+        const progressAudio = user.lastYogaProgressAudio || null;
+        setStatus("登入成功。");
+        setTranscript(`登入暱稱：${user.nickname}`);
+
+        btnStart.disabled = true;
+        btnStart.textContent = "已登入";
+
+        await speak(`歡迎回來`,"login_welcomeback_intro");
+        await speak(`${user.nickname}`);
+        // FIX: audioKey 拼字修正（避免找不到 mp3）
+        //await speak(`你上次練習到`,"login_lastpractise_intro");
+        // NEW: progress 優先播 mp3（lastYogaProgressAudio），沒有才 fallback TTS
+        await speak(`${progressText}`, progressAudio);
+        await speak(`請說「${WORD_START}」進行課前準備。然後等待回覆。`,"login_startprepare_intro");
+        startListening({ auto: true });
+      }
+
+      async function promptRegisterStage() {
+        setTranscript("（等待你說話）");
+
+        if (regStage === STAGE.NICKNAME_INPUT) {
+          setStatus("註冊第 1 步（暱稱）。");
+          await speak(`註冊第一步：暱稱。請說出你想要的暱稱。`,"login_one_intro");
+          startListening({ auto: true });
+          return;
+        }
+
+        if (regStage === STAGE.HEIGHT_INPUT) {
+          setStatus("註冊第 2 步（身高）。");
+          await speak(`下一步：請說出你的身高，單位為公分。我說完後請只說數字，例如一百七十五。`,"login_two_intro");
+          startListening({ auto: true });
+          return;
+        }
+
+        if (regStage === STAGE.WEIGHT_INPUT) {
+          setStatus("註冊第 3 步（體重）。");
+          await speak(`下一步：請說出你的體重，單位為公斤。我說完後請只說數字，例如六十五點五。`,"login_three_intro");
+          startListening({ auto: true });
+          return;
+        }
+      }
+
+      async function handleRegister(raw, normalized) {
+        // 暱稱輸入
+        if (regStage === STAGE.NICKNAME_INPUT) {
+          pendingValue = raw;
+          regStage = STAGE.NICKNAME_CONFIRM;
+          setStatus("確認暱稱。");
+          await speak(
+            `我聽到你的暱稱是`,"login_name_intro"
+          );
+          await speak(
+            `「${pendingValue}」 `
+          );
+           await speak(
+            `正確請說「${WORD_CONFIRM}」。重來請說「${WORD_RETRY}」。`,"login_reconf_intro"
+          );
+          startListening({ auto: true });
+          return;
+        }
+
+        // 暱稱確認
+        if (regStage === STAGE.NICKNAME_CONFIRM) {
+          await handleConfirm({
+            normalized,
+            onConfirm: async () => {
+              profile.nickname = String(pendingValue || "").trim();
+              pendingValue = null;
+              regStage = STAGE.HEIGHT_INPUT;
+              await promptRegisterStage();
+            },
+            onRetry: async () => {
+              pendingValue = null;
+              regStage = STAGE.NICKNAME_INPUT;
+              await promptRegisterStage();
+            },
+          });
+          return;
+        }
+
+        // 身高輸入
+        if (regStage === STAGE.HEIGHT_INPUT) {
+          const n = parseNumber(raw);
+          if (n === null || Number.isNaN(n)) {
+            setStatus("身高未聽清楚。");
+            await speak("我沒有聽到清楚的身高數字。請再說一次，只要說數字，單位公分。");
+            startListening({ auto: true });
+            return;
+          }
+
+          pendingValue = Math.round(n);
+          regStage = STAGE.HEIGHT_CONFIRM;
+          setStatus("確認身高。");
+          await speak(
+            `我聽到你的身高是`,"login_tall_intro"
+          );
+           await speak(
+            ` ${pendingValue} 公分。`
+          );
+           await speak(
+            `正確請說「${WORD_CONFIRM}」。重來請說「${WORD_RETRY}」。`,"login_reconf_intro"
+          );
+          startListening({ auto: true });
+          return;
+        }
+
+        // 身高確認
+        if (regStage === STAGE.HEIGHT_CONFIRM) {
+          await handleConfirm({
+            normalized,
+            onConfirm: async () => {
+              profile.heightCm = pendingValue;
+              pendingValue = null;
+              regStage = STAGE.WEIGHT_INPUT;
+              await promptRegisterStage();
+            },
+            onRetry: async () => {
+              pendingValue = null;
+              regStage = STAGE.HEIGHT_INPUT;
+              await promptRegisterStage();
+            },
+          });
+          return;
+        }
+
+        // 體重輸入
+        if (regStage === STAGE.WEIGHT_INPUT) {
+          const n = parseNumber(raw);
+          if (n === null || Number.isNaN(n)) {
+            setStatus("體重未聽清楚。");
+            await speak("我沒有聽到清楚的體重數字。請再說一次，然後等待回覆。");
+            startListening({ auto: true });
+            return;
+          }
+
+          pendingValue = Number.isInteger(n) ? n : Math.round(n * 10) / 10; // 體重保留 1 位小數
+          regStage = STAGE.WEIGHT_CONFIRM;
+          setStatus("確認體重。");
+          await speak(
+            `我聽到你的體重是`,"login_kg_intro"
+          );
+           await speak(
+            ` ${pendingValue} 公斤`
+          );
+           await speak(
+            `正確請說「${WORD_CONFIRM}」。重來請說「${WORD_RETRY}」。`,"login_reconf_intro"
+          );
+          startListening({ auto: true });
+          return;
+        }
+
+        // 體重確認
+        if (regStage === STAGE.WEIGHT_CONFIRM) {
+          await handleConfirm({
+            normalized,
+            onConfirm: async () => {
+              profile.weightKg = pendingValue;
+              pendingValue = null;
+              regStage = STAGE.DONE;
+              await registrationComplete();
+            },
+            onRetry: async () => {
+              pendingValue = null;
+              regStage = STAGE.WEIGHT_INPUT;
+              await promptRegisterStage();
+            },
+          });
+          return;
+        }
+      }
+
+      async function handleConfirm({ normalized, onConfirm, onRetry }) {
+        if (normalized.includes(WORD_CONFIRM)) {
+          setStatus("已確認。請稍等。");
+          await speak(`已確認。請稍等，準備進入下一步。`,"login_okone_intro");
+          await onConfirm();
+          return;
+        }
+
+        if (normalized.includes(WORD_RETRY)) {
+          setStatus("重來。請稍等。");
+          await speak(`好的，我們重來。請稍等，我會再次提問。`,"login_retryone_intro");
+          await onRetry();
+          return;
+        }
+
+        setStatus("等待你說『確認』或『重來』。");
+        await speak(`我需要你回答「${WORD_CONFIRM}」或「${WORD_RETRY}」。`,"login_reco_intro");
+        startListening({ auto: true });
+      }
+
+      async function registrationComplete() {
+        appPhase = PHASE.LOGGED_IN;
+        stopListening();
+
+        const nickname = profile.nickname || "你";
+
+        // 將註冊資料寫入 localStorage，與預設使用者結構一致
+        const user = {
+          nickname,
+          heightCm: profile.heightCm,
+          weightKg: profile.weightKg,
+          lastYogaProgressText: "第 1 套瑜珈動作（尚未開始）",
+          // NEW: 新註冊使用者可預設使用第 1 套的進度音檔（若未提供 mp3，會自動 fallback TTS）
+          lastYogaProgressAudio: " progress_1",
+        };
+        addUser(user);
+        currentUser = user;
+
+        setStatus("註冊完成，已登入。");
+        setTranscript(`暱稱：${profile.nickname}，身高：${profile.heightCm}，體重：${profile.weightKg}`);
+
+        btnStart.disabled = true;
+        btnStart.textContent = "已登入";
+
+        await speak(
+          `${nickname}`
+        );
+        await speak(
+          `註冊完成，已為你登入。你目前還沒有練習紀錄，將從第 1 套瑜珈動作開始。`,"login_signok_intro"
+        );
+        await speak(`請說「${WORD_START}」進行課前準備。然後等待回覆。`,"login_comein_intro");
+        startListening({ auto: true });
+      }
+
+      // ---- 課前概述與準備流程（步驟一、二、三，每步說「完成」進入下一步）----
+      async function startCoursePrepFlow() {
+        appPhase = PHASE.COURSE_PREP;
+        coursePrepStep = "overview";
+
+        const o = coursePrepHints.overview;
+        const overviewText = [
+          "接下來是課前概述與準備。",
+          o.rhythmLabel,
+          o.durationLabel,
+          o.bodyPartsLabel,
+          "請聽完後，依照引導完成環境與身體準備。每一步完成後請說「完成」進入下一步。",
+        ].join(" ");
+        
+        
+        setStatus("課前概述。");
+        setTranscript("（課前準備）");
+        // NEW: 課前概述優先播放音檔，沒有音檔才 fallback TTS（speak）
+        if (typeof window.playAudio === "function") {
+          await window.playAudio({ audioKey: o.overviewAudio, text: overviewText });
+        } else {
+          await speak(overviewText);
+        }
+
+        // 步驟一：鋪好瑜珈墊
+        coursePrepStep = "mat";
+        setStatus("課前準備步驟一（鋪好瑜珈墊）。");
+        await speak(coursePrepHints.steps[0].script,"yogaa_script");
+        startListening({ auto: true });
+      }
+
+      async function handleCoursePrepTranscript(raw, normalized) {
+        if (!normalized.includes(WORD_DONE)) {
+          setStatus(`請說「${WORD_DONE}」進入下一步。`);
+          await speak(`請說「${WORD_DONE}」進入下一步。我說完後請再說一次。`,"login_finisfnext_intro");
+          startListening({ auto: true });
+          return;
+        }
+
+        if (coursePrepStep === "mat") {
+          coursePrepStep = "accessories";
+          setStatus("課前準備步驟二（放置輔助產品）。");
+          setTranscript(`已聽到「${WORD_DONE}」。`);
+          await speak(`步驟一完成。`,"login_startone_intro");
+          await speak(coursePrepHints.steps[1].script,"yogab_script");
+          startListening({ auto: true });
+          return;
+        }
+
+        if (coursePrepStep === "accessories") {
+          coursePrepStep = "posture";
+          setStatus("課前準備步驟三（調整站立或坐姿）。");
+          setTranscript(`已聽到「${WORD_DONE}」。`);
+          await speak(`步驟二完成。`,"login_starttwo_intro");
+          await speak(coursePrepHints.steps[2].script,"yogac_script");
+          startListening({ auto: true });
+          return;
+        }
+
+        if (coursePrepStep === "posture") {
+          coursePrepStep = "done";
+          stopListening();
+          setStatus("課前準備完成。");
+          setTranscript("課前準備完成");
+          await speak(`步驟三完成。課前準備完成，可以開始練習。`,"login_startthree_intro");
+
+          // 課前準備完成後，通知外層橋接頁可以切換到姿勢偵測畫面
+          try {
+            window.parent?.postMessage("PREP_DONE", "*");
+          } catch (_) {
+            // 在本地檔案或跨來源情境可能會失敗，忽略即可
+          }
+        }
+      }
+
+      // 使用者互動備援（滑鼠/觸控都可；不要求鍵盤輸入）
+      btnStart.addEventListener("click", async () => {
+        // NEW: 行動裝置（iOS/Android）需要使用者互動解鎖音訊播放
+        try { await window.audioPlayer?.unlockAudio?.(); } catch (_) {}
+        // 讓使用者知道「按了之後要做什麼」，並提醒說話時機
+        await speak(
+          `歡迎來到Tacto Yoga。若已有帳號要登入，請說「${WORD_START}」；若要註冊，請說「${WORD_REGISTER}」；若要刪除帳號，請說「刪除登入帳號」。說完請等待回覆。`,
+          "login_button_intro"
+        );
+        startListening({ auto: true });
+      });
+
+      // 載入後初始化使用者列表（localStorage 若為空會建立預設「小安」），並語音引導登入
+      window.addEventListener("load", async () => {
+        btnStart.textContent = "啟動或重新啟動語音（需要時請按）";
+
+        getUsers(); // 若 localStorage 為空，建立預設使用者「小安」
+        renderUserList();
+
+        setStatus("登入頁面已開啟。正在準備語音登入。");
+        setTranscript("（等待你說話）");
+
+        await speak(
+          `歡迎來到Tacto Yoga。目前有兩種登入模式。接下來：若已有帳號要登入，請在我說完後說「${WORD_START}」；若要註冊，請說「${WORD_REGISTER}」。若要刪除帳號，請說「刪除登入帳號」。說完請等待回覆。若沒有回應，請再說一次，或按下方的『啟動或重新啟動語音』。`,
+          "login_button_intro"
+        );
+
+        startListening({ auto: true });
+      });
+
+      // 接收來自 Bridge 的控制訊號（例如：切換到練習畫面前，先把登入語音全部關閉）
+      window.addEventListener("message", (event) => {
+        if (event.data === "STOP_VOICE") {
+          stopAllVoice();
+        }
+      });
+    </script>
+  </body>
+</html>

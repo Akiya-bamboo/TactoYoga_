@@ -599,10 +599,10 @@ async function completeCurrentState(reason = "auto") {
     flowCompleted = true;
     setStateLabel("拜日式已完成");
     setHint("你已經完成一整套拜日式，可以慢慢回到自然站姿或休息。");
-    await gentleEncourage(
-      "sun_salutation_complete",
-      "恭喜你完成一整套拜日式，做得非常棒。可以給自己一點時間，好好感受身體的變化，接下來，我們要開始收納瑜珈墊，請在十字定位線周圍摸摸看是否有一個缺口處，請從缺口處向上向左拉起，往右折疊好瑜珈墊，我們就收好我們的瑜珈墊了。"
-    );
+    await gentleEncourage({
+      audioKey: "sun_salutation_complete",
+      text: "恭喜你完成一整套拜日式，做得非常棒。可以給自己一點時間，好好感受身體的變化，接下來，我們要開始收納瑜珈墊，請在十字定位線周圍摸摸看是否有一個缺口處，請從缺口處向上向左拉起，往右折疊好瑜珈墊，我們就收好我們的瑜珈墊了。",
+    });
   } else {
     // 立即開始下一個姿勢的引導 // MOD
     const nextState = sunStates[currentIndex];
@@ -623,12 +623,13 @@ async function completeCurrentState(reason = "auto") {
       // 更新 UI 標籤與提示，並播放下一個狀態的 guide 語音
       setStateLabel(nextState.label);
       setHint("小提醒：" + nextState.promptText);
-      await gentleGuide({
+      gentleGuide({
         audioKey: nextState.guideAudio ?? (nextState.id + "_guide"),
         text: nextState.guide,
+      }).finally(() => {
+        // guide 播放完畢，解鎖此姿勢的成功判斷（非阻塞）
+        stateCheckUnlocked = true;
       });
-      // guide 播放完畢，解鎖此姿勢的成功判斷
-      stateCheckUnlocked = true;
     }
   }
 }
@@ -682,12 +683,13 @@ async function onPoseState(landmarks) {
     }
     setStateLabel(state.label);
     setHint("小提醒：" + state.promptText);
-    await gentleGuide({
+    gentleGuide({
       audioKey: state.guideAudio ?? (state.id + "_guide"),
       text: state.guide,
+    }).finally(() => {
+      // guide 播播放完畢，解鎖此姿勢的成功判斷（非阻塞）
+      stateCheckUnlocked = true;
     });
-    // guide 播放完畢，解鎖此姿勢的成功判斷
-    stateCheckUnlocked = true;
   }
 
   // 控制提示頻率，避免洗頻
@@ -733,7 +735,7 @@ async function onPoseState(landmarks) {
     // 如果姿勢有一點接近，偶爾給溫柔提示
     if (near && canPrompt) {
       lastPromptAt = now;
-      await gentleGuide({
+      gentleGuide({
         audioKey: state.promptAudio ?? (state.id + "_prompt"),
         text: state.promptText,
       });
@@ -806,16 +808,20 @@ async function startPoseFlow() {
     detectFrame();
   };
 
-  // 先播放課程開場語音，引導尚未結束前不進行姿勢判斷 // NEW
-  await gentleGuide({
+  // 1. 先開啟偵測開關（保證在畫面啟動後 1 秒內開啟）
+  allowPoseCheck = true;
+
+  // 2. 啟動語音，但不使用 await（非阻塞）
+  gentleGuide({
     audioKey: "camera_1",
     text: "鏡頭已經準備好，接下來我會一步一步陪你完成一整套拜日式。如果你準備好了，就跟著我的引導慢慢來做瑜珈吧。",
   });
 
   // NEW: 就緒提示（視障者重要）
   try { window.audioPlayer?.setStatus?.("ready"); } catch (_) {}
+  try { window.audioPlayer?.startHeartbeat?.(); } catch (_) {}
 
-  allowPoseCheck = true; // NEW：開場語音播放完成後才開始做姿勢檢測
+  console.log("偵測已啟動，導引語音同步播放中");
 }
 
 // NEW: 手動成功按鈕事件處理（流程與自動成功相同，只是略過姿勢條件）

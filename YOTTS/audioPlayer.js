@@ -6,7 +6,18 @@
   // GitHub Pages 會把網站掛在 /<repo>/ 下，若用 "/audio/" 會變成根網域 /audio/ 造成 404。
   // 這裡改成「以 audioPlayer.js 自己的載入位置為基準」去找同層的 /audio/ 資料夾：
   // e.g. https://user.github.io/repo/audioPlayer.js → https://user.github.io/repo/audio/
-  const SCRIPT_URL = (document.currentScript && document.currentScript.src) ? document.currentScript.src : document.baseURI;
+  const SCRIPT_URL = (() => {
+    const cs = document.currentScript && document.currentScript.src ? document.currentScript.src : "";
+    if (cs) return cs;
+    try {
+      const scripts = Array.from(document.scripts || []);
+      const hit = scripts
+        .map((s) => (s && typeof s.src === "string" ? s.src : ""))
+        .find((src) => /audioPlayer\.js(\?|#|$)/.test(src));
+      if (hit) return hit;
+    } catch (_) {}
+    return new URL("audioPlayer.js", document.baseURI).toString();
+  })();
   const BASE_URL = new URL("./audio/", SCRIPT_URL).toString();
 
   /**
@@ -114,6 +125,29 @@
   // mode = 'audio'：使用音檔；mode = 'tts'：只用瀏覽器 TTS（備援或開發用）
   let mode = "audio";
 
+  // iOS/平板端保活：使用極短 Base64 靜音軌，每 2 秒撥弄一次喇叭
+  let heartbeatTimer = null;
+  const HEARTBEAT_SRC = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==";
+
+  function startHeartbeat() {
+    if (heartbeatTimer) return;
+    try {
+      const silent = new Audio(HEARTBEAT_SRC);
+      heartbeatTimer = global.setInterval(() => {
+        silent.currentTime = 0;
+        silent.play().catch(() => {});
+      }, 2000);
+    } catch (_) {}
+  }
+
+  function stopHeartbeat() {
+    if (!heartbeatTimer) return;
+    try {
+      global.clearInterval(heartbeatTimer);
+    } catch (_) {}
+    heartbeatTimer = null;
+  }
+
   function resolveUrl(key) {
     const file = VOICE_MAP[key];
     if (!file) return null;
@@ -185,6 +219,8 @@
       osc.stop(0.01);
       if (ctx.state === "suspended") await ctx.resume();
       audioUnlocked = true;
+      // 解鎖成功後即可啟動保活
+      startHeartbeat();
       return true;
     } catch (_) {
       return false;
@@ -251,10 +287,9 @@
    * - 會在播放前先停止上一段，避免重疊。
    * - 若找不到對應音檔，且提供 fallbackText，則使用 TTS 當備援。
    */
-  // NEW: Never Silent 版本（永遠 resolve；任何失敗立刻 fallback TTS 並回傳其 Promise）
-  function playVoice(key, options) {
-    const opts = options || {};
-    const { interrupt = true, fallbackText } = opts;
+  // NEW: Never Silent 版本（永遠 resolve；1.5 秒保險絲 + 自動 TTS 備援）
+  function playVoice(key, options = {}) {
+    const { interrupt = true, fallbackText } = options;
     const ttsText = fallbackText || key;
 
     if (interrupt) stopAll();
@@ -263,33 +298,60 @@
       return speakTTS(ttsText);
     }
 
-    const audio = preload(key);
-    if (!audio) {
-      return speakTTS(ttsText);
-    }
+    return new Promise((resolve) => {
+      const audio = preload(key);
 
-    currentAudio = audio;
+      // 事先建立 1.5 秒保險絲：不論任何原因，只要音檔沒成功走完，就改走 TTS 並 resolve
+      const safetyTimer = global.setTimeout(() => {
+        console.warn("audioPlayer: 音訊超時，強制改用 TTS", key);
+        speakTTS(ttsText).then(resolve);
+      }, 1500);
 
-    return (async () => {
-      try {
-        // 平板環境有時需要 load 才能穩定開始播放
-        try { audio.load(); } catch (_) {}
-        audio.currentTime = 0;
-
-        const playResult = audio.play();
-        if (playResult && typeof playResult.catch === "function") {
-          await playResult;
-        }
-
-        await waitForEndedOrError(audio);
-        if (currentAudio === audio) currentAudio = null;
+      if (!audio) {
+        global.clearTimeout(safetyTimer);
+        speakTTS(ttsText).then(resolve);
         return;
-      } catch (_) {
-        if (currentAudio === audio) currentAudio = null;
-        // 播放失敗（含 404 / NotAllowedError / 其他錯誤）→ 立刻 fallback TTS
-        return await speakTTS(ttsText);
       }
-    })();
+
+      currentAudio = audio;
+
+      const cleanupAndResolve = (fn) => {
+        return () => {
+          global.clearTimeout(safetyTimer);
+          if (currentAudio === audio) {
+            currentAudio = null;
+          }
+          fn && fn();
+          resolve();
+        };
+      };
+
+      audio.onended = cleanupAndResolve(null);
+      audio.onerror = () => {
+        global.clearTimeout(safetyTimer);
+        if (currentAudio === audio) currentAudio = null;
+        speakTTS(ttsText).then(resolve);
+      };
+
+      try {
+        audio.load();
+      } catch (_) {}
+
+      try {
+        const playPromise = audio.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch(() => {
+            global.clearTimeout(safetyTimer);
+            if (currentAudio === audio) currentAudio = null;
+            speakTTS(ttsText).then(resolve);
+          });
+        }
+      } catch (_) {
+        global.clearTimeout(safetyTimer);
+        if (currentAudio === audio) currentAudio = null;
+        speakTTS(ttsText).then(resolve);
+      }
+    });
   }
 
   function setMode(newMode) {
@@ -310,6 +372,8 @@
     getMode,
     unlockAudio,
     setStatus,
+    startHeartbeat,
+    stopHeartbeat,
   };
 
   // 方便直接呼叫：playVoice("prayer_start")
