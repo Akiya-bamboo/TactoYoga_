@@ -6,7 +6,18 @@
   // GitHub Pages 會把網站掛在 /<repo>/ 下，若用 "/audio/" 會變成根網域 /audio/ 造成 404。
   // 這裡改成「以 audioPlayer.js 自己的載入位置為基準」去找同層的 /audio/ 資料夾：
   // e.g. https://user.github.io/repo/audioPlayer.js → https://user.github.io/repo/audio/
-  const SCRIPT_URL = (document.currentScript && document.currentScript.src) ? document.currentScript.src : document.baseURI;
+  const SCRIPT_URL = (() => {
+    const cs = document.currentScript && document.currentScript.src ? document.currentScript.src : "";
+    if (cs) return cs;
+    try {
+      const scripts = Array.from(document.scripts || []);
+      const hit = scripts
+        .map((s) => (s && typeof s.src === "string" ? s.src : ""))
+        .find((src) => /audioPlayer\.js(\?|#|$)/.test(src));
+      if (hit) return hit;
+    } catch (_) {}
+    return new URL("audioPlayer.js", document.baseURI).toString();
+  })();
   const BASE_URL = new URL("./audio/", SCRIPT_URL).toString();
 
   /**
@@ -114,6 +125,55 @@
   // mode = 'audio'：使用音檔；mode = 'tts'：只用瀏覽器 TTS（備援或開發用）
   let mode = "audio";
 
+  // iOS/平板端保活：避免 MediaPipe 運算/請求後音訊被系統回收
+  let heartbeatTimer = null;
+  let heartbeatCtx = null;
+  const HEARTBEAT_INTERVAL_MS = 3000;
+  const HEARTBEAT_BEEP_MS = 100; // 0.1s
+
+  function ensureHeartbeatCtx() {
+    const AudioCtx = global.AudioContext || global.webkitAudioContext;
+    if (!AudioCtx) return null;
+    if (heartbeatCtx) return heartbeatCtx;
+    heartbeatCtx = new AudioCtx();
+    return heartbeatCtx;
+  }
+
+  async function heartbeatTick() {
+    try {
+      const ctx = ensureHeartbeatCtx();
+      if (!ctx) return;
+      if (ctx.state === "suspended") {
+        await ctx.resume();
+      }
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      // 極低音量（接近靜音）但仍會走音訊管線
+      gain.gain.value = 0.0001;
+      osc.frequency.value = 20; // 低頻，避免可感知聲
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + HEARTBEAT_BEEP_MS / 1000);
+    } catch (_) {}
+  }
+
+  function startHeartbeat() {
+    if (heartbeatTimer) return;
+    // 立即打一針，之後每 3 秒一次
+    void heartbeatTick();
+    heartbeatTimer = global.setInterval(() => {
+      void heartbeatTick();
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  function stopHeartbeat() {
+    if (heartbeatTimer) {
+      global.clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  }
+
   function resolveUrl(key) {
     const file = VOICE_MAP[key];
     if (!file) return null;
@@ -185,6 +245,8 @@
       osc.stop(0.01);
       if (ctx.state === "suspended") await ctx.resume();
       audioUnlocked = true;
+      // 解鎖成功後即可啟動保活
+      startHeartbeat();
       return true;
     } catch (_) {
       return false;
@@ -226,6 +288,33 @@
     });
   }
 
+  function waitForStartOrError(audio) {
+    return new Promise((resolve) => {
+      const done = (kind) => {
+        audio.removeEventListener("playing", onPlaying);
+        audio.removeEventListener("timeupdate", onTimeUpdate);
+        audio.removeEventListener("canplay", onCanPlay);
+        audio.removeEventListener("error", onError);
+        resolve(kind);
+      };
+      const onPlaying = () => done("playing");
+      const onTimeUpdate = () => {
+        // 有些 iOS 不一定先觸發 playing，但 timeupdate 代表已開始推進
+        if (audio.currentTime > 0) done("playing");
+      };
+      const onCanPlay = () => {
+        // canplay 代表載入到可播放（但不代表真的開始播放）
+        // 這裡不直接 done，交給保險絲決定要不要 fallback
+      };
+      const onError = () => done("error");
+
+      audio.addEventListener("playing", onPlaying, { once: true });
+      audio.addEventListener("timeupdate", onTimeUpdate);
+      audio.addEventListener("canplay", onCanPlay);
+      audio.addEventListener("error", onError, { once: true });
+    });
+  }
+
   /**
    * 統一入口：播放音檔（mp3/wav）或 fallback TTS。
    * - audioKey: string | null（例："prayer_1_prompt"）
@@ -256,6 +345,7 @@
     const opts = options || {};
     const { interrupt = true, fallbackText } = opts;
     const ttsText = fallbackText || key;
+    const FUSE_MS = 1500;
 
     if (interrupt) stopAll();
 
@@ -272,13 +362,31 @@
 
     return (async () => {
       try {
-        // 平板環境有時需要 load 才能穩定開始播放
-        try { audio.load(); } catch (_) {}
+        // iOS/平板環境關鍵：先 load 再 play，能大幅提高穩定開始播放機率
+        try {
+          audio.load();
+        } catch (_) {}
         audio.currentTime = 0;
 
-        const playResult = audio.play();
-        if (playResult && typeof playResult.catch === "function") {
-          await playResult;
+        const playPromise = audio.play();
+        // play() rejected（NotAllowedError / AbortError / 404 等）→ 直接 fallback
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch(() => {});
+        }
+
+        // 保險絲：1.5 秒內若沒有「開始播放」跡象，就不要卡住流程，立刻走 TTS
+        const started = await Promise.race([
+          waitForStartOrError(audio),
+          new Promise((resolve) => global.setTimeout(() => resolve("timeout"), FUSE_MS)),
+        ]);
+
+        if (started !== "playing") {
+          try {
+            audio.pause();
+            audio.currentTime = 0;
+          } catch (_) {}
+          if (currentAudio === audio) currentAudio = null;
+          return await speakTTS(ttsText);
         }
 
         await waitForEndedOrError(audio);
@@ -310,6 +418,8 @@
     getMode,
     unlockAudio,
     setStatus,
+    startHeartbeat,
+    stopHeartbeat,
   };
 
   // 方便直接呼叫：playVoice("prayer_start")
