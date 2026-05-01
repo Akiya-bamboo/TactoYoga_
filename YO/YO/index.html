@@ -491,18 +491,6 @@
         faceVideo.srcObject = null;
       }
 
-      async function openFaceCameraOnlyStream() {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user" },
-          audio: false,
-        });
-        // 保險：若裝置仍回傳 audio track，立即關閉，避免誤開麥克風
-        try {
-          stream.getAudioTracks().forEach((t) => t.stop());
-        } catch (_) {}
-        return stream;
-      }
-
       async function captureFaceDescriptorWithTimeout(timeoutMs = 9000) {
         if (!navigator.mediaDevices?.getUserMedia) {
           return { ok: false, reason: "camera_not_supported" };
@@ -510,7 +498,7 @@
 
         let stream = null;
         try {
-          stream = await openFaceCameraOnlyStream();
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
           faceVideo.srcObject = stream;
           await faceVideo.play();
 
@@ -570,7 +558,7 @@
         }
         let stream = null;
         try {
-          stream = await openFaceCameraOnlyStream();
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
           faceVideo.srcObject = stream;
           await faceVideo.play();
 
