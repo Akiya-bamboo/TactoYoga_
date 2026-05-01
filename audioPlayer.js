@@ -136,7 +136,7 @@
     if (audioCache[key]) return audioCache[key];
     const audio = new Audio(url);
     // 效能優化：不要全域預載，且在平板端減少初始頻寬佔用
-    audio.preload = "auto";
+    audio.preload = "none";
     audioCache[key] = audio;
     return audio;
   }
@@ -266,9 +266,6 @@
     const opts = options || {};
     const { interrupt = true, fallbackText } = opts;
     const ttsText = fallbackText || key;
-    if (!audioUnlocked) {
-      return speakTTS(ttsText);
-    }
 
     if (interrupt) stopAll();
 
