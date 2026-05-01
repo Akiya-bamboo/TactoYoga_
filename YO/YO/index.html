@@ -99,6 +99,43 @@
         border-color: rgba(0, 0, 0, 0.2);
       }
 
+      #btnFaceLogin,
+      #btnBindFace {
+        display: none;
+      }
+
+      /* iPad Safari 備援：手動解鎖音訊/麥克風，並重播上一段語音 */
+      #btnIOSRecover {
+        position: fixed;
+        left: 14px;
+        bottom: 65px;
+        z-index: 9999;
+        width: auto;
+        margin-top: 0;
+        padding: 10px 12px;
+        font-size: 13px;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        background: rgba(0, 0, 0, 0.55);
+        color: #fff;
+      }
+
+      #btnIOSRecover2 {
+        position: fixed;
+        left: 14px;
+        bottom: 14px;
+        z-index: 9999;
+        width: auto;
+        margin-top: 0;
+        padding: 10px 12px;
+        font-size: 13px;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        background: rgba(0, 0, 0, 0.55);
+        color: #fff;
+      }
+
+
       button:focus {
         outline: 3px solid var(--accent);
         outline-offset: 3px;
@@ -177,6 +214,7 @@
       }
     </style>
     <script src="../../audioPlayer.js"></script>
+     <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
   </head>
   <body>
     <main>
@@ -199,11 +237,16 @@
         <button id="btnStart" type="button">
           啟動或重新啟動語音（需要時請按）
         </button>
+        <button id="btnFaceLogin" type="button">人臉辨識登入（鏡頭）</button>
+        <button id="btnBindFace" type="button">綁定目前登入帳號人臉</button>
+        <button id="btnIOSRecover" type="button">語音播放</button>
+        <a href="../../TRY/TRY/index.html"><button id="btnIOSRecover2" type="button">姿態辨識流程</button></a>
 
         <div class="status" aria-label="狀態資訊（視覺輔助用）">
           <p><strong>狀態：</strong><span id="statusText">初始化中…</span></p>
           <p><strong>辨識內容：</strong><span id="transcriptText">（尚未開始）</span></p>
         </div>
+        <video id="faceVideo" class="sr-only" autoplay muted playsinline></video>
 
         <div id="userListSection" class="status" aria-label="帳號列表">
           <p><strong>帳號列表</strong></p>
@@ -244,6 +287,7 @@
 
       // ===== 使用者持久化（localStorage；未來可改為呼叫後端 API 做雲端帳號／多裝置同步）=====
       const STORAGE_KEY_USERS = "tacto_yoga_users";
+      const STORAGE_KEY_FACE_DESCRIPTORS = "tacto_yoga_face_descriptors";
       const DEFAULT_NICKNAME = "小安";
 
       const defaultUserPayload = {
@@ -370,6 +414,303 @@
         return Object.keys(users).length > 1;
       }
 
+      function loadFaceMap() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY_FACE_DESCRIPTORS);
+          const data = raw ? JSON.parse(raw) : {};
+          return data && typeof data === "object" ? data : {};
+        } catch (_) {
+          return {};
+        }
+      }
+
+      function saveFaceMap(faceMap) {
+        try {
+          localStorage.setItem(STORAGE_KEY_FACE_DESCRIPTORS, JSON.stringify(faceMap || {}));
+          return true;
+        } catch (_) {
+          return false;
+        }
+      }
+
+      function getFaceDescriptorByNickname(nickname) {
+        const key = String(nickname || "");
+        const users = getUsers();
+        const userDescriptor = users[key]?.descriptor;
+        const faceMap = loadFaceMap();
+        const value = Array.isArray(userDescriptor) ? userDescriptor : faceMap[key];
+        if (!Array.isArray(value) || value.length === 0) return null;
+        const parsed = value.map((x) => Number(x));
+        if (parsed.some((x) => Number.isNaN(x))) return null;
+        return new Float32Array(parsed);
+      }
+
+      function setFaceDescriptorForNickname(nickname, descriptor) {
+        const key = String(nickname || "").trim();
+        if (!key || !descriptor) return false;
+        const asArray = Array.from(descriptor);
+        // 與帳號資料一起保存（符合 users[username].descriptor 結構）
+        const users = getUsers();
+        if (users[key] && typeof users[key] === "object") {
+          users[key].descriptor = asArray;
+          saveUsersToStorage(users);
+        }
+        // 保留舊版 face map，向下相容
+        const faceMap = loadFaceMap();
+        faceMap[key] = asArray;
+        return saveFaceMap(faceMap);
+      }
+
+      function euclideanDistance(a, b) {
+        if (!a || !b || a.length !== b.length) return Number.POSITIVE_INFINITY;
+        let sum = 0;
+        for (let i = 0; i < a.length; i++) {
+          const diff = a[i] - b[i];
+          sum += diff * diff;
+        }
+        return Math.sqrt(sum);
+      }
+
+      async function ensureFaceModels() {
+        if (faceModelsLoaded) return true;
+        if (!window.faceapi) return false;
+        const modelUrl = "https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/";
+        await Promise.all([
+          window.faceapi.nets.tinyFaceDetector.loadFromUri(modelUrl),
+          window.faceapi.nets.faceLandmark68Net.loadFromUri(modelUrl),
+          window.faceapi.nets.faceRecognitionNet.loadFromUri(modelUrl),
+        ]);
+        faceModelsLoaded = true;
+        return true;
+      }
+
+      async function stopFaceStream(stream) {
+        try {
+          stream?.getTracks?.().forEach((t) => t.stop());
+        } catch (_) {}
+        faceVideo.srcObject = null;
+      }
+
+      async function captureFaceDescriptorWithTimeout(timeoutMs = 9000) {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          return { ok: false, reason: "camera_not_supported" };
+        }
+
+        let stream = null;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+          faceVideo.srcObject = stream;
+          await faceVideo.play();
+
+          const options = new window.faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.45 });
+          const startedAt = Date.now();
+          let noFaceCount = 0;
+
+          while (Date.now() - startedAt < timeoutMs) {
+            const detection = await window.faceapi
+              .detectSingleFace(faceVideo, options)
+              .withFaceLandmarks()
+              .withFaceDescriptor();
+
+            if (detection?.descriptor) {
+              return { ok: true, descriptor: detection.descriptor };
+            }
+
+            noFaceCount += 1;
+            if (noFaceCount >= 8) {
+              setStatus("鏡頭中找不到清楚臉部，請調整光線與距離。");
+            }
+            await new Promise((r) => window.setTimeout(r, 250));
+          }
+
+          return { ok: false, reason: "timeout_or_no_face" };
+        } catch (err) {
+          if (String(err?.name || "").includes("NotAllowed")) {
+            return { ok: false, reason: "camera_permission_denied" };
+          }
+          return { ok: false, reason: "camera_error" };
+        } finally {
+          await stopFaceStream(stream);
+        }
+      }
+
+      async function startVoiceLogin(reasonText, reasonAudioKey = null) {
+        appPhase = PHASE.GATE;
+        if (reasonText) await speak(reasonText, reasonAudioKey);
+        await speak(`已切換到語音登入。若已有帳號請說「${WORD_START}」，若要註冊請說「${WORD_REGISTER}」。`, "login_button_intro");
+        startListening({ auto: true });
+      }
+
+      async function startVoiceRegister(reasonText, reasonAudioKey = null) {
+        if (reasonText) await speak(reasonText, reasonAudioKey);
+        await startRegistrationFlow();
+      }
+
+      async function startVoiceNicknameLogin(reasonText, reasonAudioKey = null) {
+        appPhase = PHASE.NICKNAME_LOGIN;
+        if (reasonText) await speak(reasonText, reasonAudioKey);
+        await promptNicknameLogin();
+      }
+
+      async function detectSingleFaceWithTimeout(timeoutMs = 5000) {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          return { ok: false, reason: "camera_not_supported" };
+        }
+        let stream = null;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+          faceVideo.srcObject = stream;
+          await faceVideo.play();
+
+          const options = new window.faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.45 });
+          const startedAt = Date.now();
+          while (Date.now() - startedAt < timeoutMs) {
+            const detection = await window.faceapi.detectSingleFace(faceVideo, options);
+            if (detection?.score) return { ok: true };
+            await new Promise((r) => window.setTimeout(r, 220));
+          }
+          return { ok: false, reason: "timeout_or_no_face" };
+        } catch (err) {
+          if (String(err?.name || "").includes("NotAllowed")) return { ok: false, reason: "camera_permission_denied" };
+          return { ok: false, reason: "camera_error" };
+        } finally {
+          await stopFaceStream(stream);
+        }
+      }
+
+      async function detectFaceThenLogin() {
+        if (faceAuthBusy) {
+          await startVoiceNicknameLogin("未辨識到臉部，將進入語音暱稱登入流程", "login_faceno");//語音新增處2
+          return;
+        }
+        faceAuthBusy = true;
+        stopListening();
+        let routed = false;
+        const fallbackText = "未辨識到臉部，將進入語音暱稱登入流程";
+
+        try {
+          setStatus("正在啟動鏡頭進行臉部偵測（登入）。");
+          await speak(`正在辨識您的臉部，請面向鏡頭`,"login_face");////語音新增處1
+          const modelReady = await ensureFaceModels();
+          if (!modelReady) {
+            routed = true;
+            await startVoiceNicknameLogin(fallbackText, "login_faceno");//語音新增處2
+            return;
+          }
+
+          // 強制 5 秒內要走出結果，避免停留在辨識畫面
+          const captured = await Promise.race([
+            detectSingleFaceWithTimeout(5000),
+            new Promise((resolve) =>
+              window.setTimeout(() => resolve({ ok: false, reason: "timeout_or_no_face" }), 5100)
+            ),
+          ]);
+          if (!captured.ok) {
+            routed = true;
+            await startVoiceNicknameLogin(fallbackText, "login_faceno");//語音新增處2
+            return;
+          }
+
+          const nickname = getLatestNicknameForLogin();
+          await speak(`辨識成功，正在為您登入`,"login_faceok");////語音新增處
+          routed = true;
+          await loginSuccess(nickname);
+        } catch (_) {
+          routed = true;
+          await startVoiceNicknameLogin(fallbackText, "login_faceno");//語音新增處2
+        } finally {
+          faceAuthBusy = false;
+          if (!routed) {
+            await startVoiceNicknameLogin(fallbackText, "login_faceno");//語音新增處2
+          }
+        }
+      }
+
+      async function detectFaceThenRegister() {
+        if (faceAuthBusy) return null;
+        faceAuthBusy = true;
+        stopListening();
+        try {
+          setStatus("正在啟動鏡頭進行臉部偵測（註冊）。");
+          await speak(`正在辨識您的臉部，請面向鏡頭`,"login_face");////語音新增處1
+          const modelReady = await ensureFaceModels();
+          if (!modelReady) {
+            await startVoiceRegister("未辨識到臉部，將進入語音流程", "login_facenoo");//語音新增處4
+            return null;
+          }
+          const captured = await detectSingleFaceWithTimeout(5000);
+          if (!captured.ok) {
+            await startVoiceRegister("未辨識到臉部，將進入語音流程", "login_facenoo");//語音新增處4
+            return null;
+          }
+          await speak(`辨識成功，請開始註冊`,"login_faceokk");////語音新增處
+          await startVoiceRegister();
+          return true;
+        } catch (_) {
+          await startVoiceRegister("未辨識到臉部，將進入語音流程", "login_facenoo");//語音新增處4
+          return null;
+        } finally {
+          faceAuthBusy = false;
+        }
+      }
+
+      async function loginSuccess(user) {
+        const users = getUsers();
+        const key = typeof user === "string" ? String(user).trim() : String(user?.nickname || "").trim();
+        const picked = users[key] || user;
+        if (picked && typeof picked === "object" && picked.nickname) {
+          await loginWithUser(picked);
+          return;
+        }
+        await loginWithUser(users[DEFAULT_NICKNAME] || { ...defaultUserPayload });
+      }
+
+      async function initLogin() {
+        appPhase = PHASE.GATE;
+        startListening({ auto: true });
+      }
+
+      async function bindCurrentUserFace() {
+        if (faceAuthBusy) return;
+        if (!currentUser?.nickname) {
+          setStatus("尚未登入，無法綁定人臉。");
+          await speak("請先用原本語音流程登入帳號，再綁定人臉。");
+          return;
+        }
+
+        faceAuthBusy = true;
+        stopListening();
+
+        try {
+          setStatus(`正在為 ${currentUser.nickname} 綁定人臉。`);
+          await speak(`現在為 ${currentUser.nickname} 綁定人臉。請面向鏡頭並保持不動。`);
+
+          const modelReady = await ensureFaceModels();
+          if (!modelReady) {
+            await speak("人臉模型尚未載入成功，請稍後再試。");
+            return;
+          }
+
+          const captured = await captureFaceDescriptorWithTimeout(12000);
+          if (!captured.ok || !captured.descriptor) {
+            if (captured.reason === "timeout_or_no_face") {
+              await speak("我找不到清楚臉部，可能光線不足或距離太遠。請調整後再試。");
+            } else if (captured.reason === "camera_permission_denied") {
+              await speak("你尚未允許鏡頭權限，請允許後再綁定。");
+            } else {
+              await speak("人臉綁定失敗，請稍後再試。");
+            }
+            return;
+          }
+
+          setFaceDescriptorForNickname(currentUser.nickname, captured.descriptor);
+          setStatus(`已完成 ${currentUser.nickname} 的人臉綁定。`);
+          await speak(`已完成 ${currentUser.nickname} 的人臉綁定。下次可優先使用人臉辨識登入。`);
+        } finally {
+          faceAuthBusy = false;
+        }
+      }
+
       /**
        * 課前概述與準備步驟（集中於此，方便日後修改）
        * - overview：本次課程前情概述（節奏、時長、主要身體部位）
@@ -416,9 +757,13 @@
       };
 
       const btnStart = document.getElementById("btnStart");
+      const btnFaceLogin = document.getElementById("btnFaceLogin");
+      const btnBindFace = document.getElementById("btnBindFace");
+      const btnIOSRecover = document.getElementById("btnIOSRecover");
       const statusText = document.getElementById("statusText");
       const transcriptText = document.getElementById("transcriptText");
       const live = document.getElementById("live");
+      const faceVideo = document.getElementById("faceVideo");
 
       let recognition = null;
       let isListening = false;
@@ -433,6 +778,10 @@
       let coursePrepStep = "overview"; // "overview" | "mat" | "accessories" | "posture" | "done"
 
       let currentUser = null;
+      let faceModelsLoaded = false;
+      let faceAuthBusy = false;
+      let lastSpokenText = "";
+      let lastSpokenKey = null;
 
       // 註冊資料（不做永久儲存）
       const profile = {
@@ -533,6 +882,8 @@
       }
 
       function speak(text, key) {
+        lastSpokenText = String(text || "");
+        lastSpokenKey = key || null;
         // 若有指定 key 且已載入 audioPlayer，優先走錄音檔
         if (key && window.audioPlayer && typeof window.playVoice === "function") {
           isSpeaking = true;
@@ -596,6 +947,15 @@
 
       function hasRegisteredUsers() {
         return Object.keys(getUsers()).length > 0;
+      }
+
+      function getLatestNicknameForLogin() {
+        const users = getUsers();
+        const latestFromStorage = String(localStorage.getItem("nickname") || "").trim();
+        if (latestFromStorage && users[latestFromStorage]) return latestFromStorage;
+        const keys = Object.keys(users);
+        const latestFromUsers = keys.length ? keys[keys.length - 1] : "";
+        return latestFromUsers || DEFAULT_NICKNAME;
       }
 
       function getListeningHint() {
@@ -828,11 +1188,11 @@
         // 入口：說「開始」進入暱稱登入；說「註冊」進入註冊；說「刪除登入帳號」進入語音刪除
         if (appPhase === PHASE.GATE) {
           if (normalized.includes(WORD_START)) {
-            await proceedAfterStart();
+            await detectFaceThenLogin();
             return;
           }
           if (normalized.includes(WORD_REGISTER)) {
-            await startRegistrationFlow();
+            await detectFaceThenRegister();
             return;
           }
           if (normalized.includes("刪除") && normalized.includes("帳號")) {
@@ -978,7 +1338,7 @@
 
         setStatus("尚未註冊。接下來：開始語音註冊。");
         await speak(
-          `你尚未註冊。接下來開始註冊。你將依序提供暱稱、身高（公分）、體重（公斤）。每一步我會重複一次你剛剛說的內容。正確請說「${WORD_CONFIRM}」，重來請說「${WORD_RETRY}」。我說完後你再回答。`,
+          `你尚未註冊。接下來開始註冊。你將依序提供暱稱、身高（公分），體重將會自動偵測。每一步我會重複一次你剛剛說的內容。正確請說「${WORD_CONFIRM}」，重來請說「${WORD_RETRY}」。我說完後你再回答。`,
           "login_sign_intro"
         );
 
@@ -1008,7 +1368,7 @@
         setTranscript("（等待你說話）");
         setStatus("暱稱登入。");
 
-        const exampleNick = Object.keys(getUsers())[0] || DEFAULT_NICKNAME;
+        const exampleNick = getLatestNicknameForLogin();
         await speak(
           `請說出你的暱稱登入。例如`,"login_talkname_intro"
         );
@@ -1083,7 +1443,14 @@
 
         if (regStage === STAGE.WEIGHT_INPUT) {
           setStatus("註冊第 3 步（體重）。");
-          await speak(`下一步：請說出你的體重，單位為公斤。我說完後請只說數字，例如六十五點五。`,"login_three_intro");
+          // 改為自動偵測（模擬）：在 40~100 公斤間隨機產生體重，不再要求語音輸入
+          const autoWeight = Math.floor(Math.random() * (100 - 40 + 1)) + 40;
+          pendingValue = autoWeight;
+          regStage = STAGE.WEIGHT_CONFIRM;
+          await speak(`已為你自動偵測體重。`,"login_kga");//語音新增處
+          await speak(`目前偵測到`,"login_kgb");//語音新增處
+          await speak(` ${autoWeight} 公斤。`);
+          await speak(`正確請說「${WORD_CONFIRM}」。重來請說「${WORD_RETRY}」。`, "login_reconf_intro");
           startListening({ auto: true });
           return;
         }
@@ -1254,6 +1621,7 @@
           lastYogaProgressAudio: " progress_1",
         };
         addUser(user);
+        try { localStorage.setItem("nickname", nickname); } catch (_) {}
         currentUser = user;
 
         setStatus("註冊完成，已登入。");
@@ -1352,29 +1720,55 @@
         // NEW: 行動裝置（iOS/Android）需要使用者互動解鎖音訊播放
         try { await window.audioPlayer?.unlockAudio?.(); } catch (_) {}
         // 讓使用者知道「按了之後要做什麼」，並提醒說話時機
-        await speak(
-          `歡迎來到Tacto Yoga。若已有帳號要登入，請說「${WORD_START}」；若要註冊，請說「${WORD_REGISTER}」；若要刪除帳號，請說「刪除登入帳號」。說完請等待回覆。`,
+       await speak(
+         `歡迎來到Tacto Yoga。若已有帳號要登入，請說「${WORD_START}」；若要註冊，請說「${WORD_REGISTER}」；若要刪除帳號，請說「刪除登入帳號」。說完請等待回覆。`,
           "login_button_intro"
         );
+        startListening({ auto: true });
+      });
+      btnFaceLogin.addEventListener("click", async () => {
+        try { await window.audioPlayer?.unlockAudio?.(); } catch (_) {}
+        await detectFaceThenLogin();
+      });
+
+      btnBindFace.addEventListener("click", async () => {
+        try { await window.audioPlayer?.unlockAudio?.(); } catch (_) {}
+        await bindCurrentUserFace();
+      });
+
+      btnIOSRecover.addEventListener("click", async () => {
+        // iPad Safari 備援：用使用者手勢主動解鎖音訊與麥克風流程，再重播上一段語音
+        try { await window.audioPlayer?.unlockAudio?.(); } catch (_) {}
+        try { recognition = recognition || createRecognition(); } catch (_) {}
+        if (lastSpokenText) {
+          await speak(lastSpokenText, lastSpokenKey);
+        } else {
+          await speak("已重新啟動語音，請再說一次。");
+        }
         startListening({ auto: true });
       });
 
       // 載入後初始化使用者列表（localStorage 若為空會建立預設「小安」），並語音引導登入
       window.addEventListener("load", async () => {
         btnStart.textContent = "啟動或重新啟動語音（需要時請按）";
+        btnFaceLogin.textContent = "人臉辨識登入（鏡頭）";
+        btnBindFace.textContent = "綁定目前登入帳號人臉";
 
         getUsers(); // 若 localStorage 為空，建立預設使用者「小安」
         renderUserList();
 
-        setStatus("登入頁面已開啟。正在準備語音登入。");
+        setStatus("登入頁面已開啟。可說開始登入或註冊，系統會先做人臉偵測。");
         setTranscript("（等待你說話）");
-
-        await speak(
-          `歡迎來到Tacto Yoga。目前有兩種登入模式。接下來：若已有帳號要登入，請在我說完後說「${WORD_START}」；若要註冊，請說「${WORD_REGISTER}」。若要刪除帳號，請說「刪除登入帳號」。說完請等待回覆。若沒有回應，請再說一次，或按下方的『啟動或重新啟動語音』。`,
-          "login_button_intro"
-        );
-
-        startListening({ auto: true });
+        const introText =
+          `歡迎來到Tacto Yoga。若你說開始登入或註冊，系統會先啟動鏡頭做人臉偵測。若未辨識到臉部，會自動切換回語音流程。`;
+        // Live Server 直接開頁時可能尚未解鎖音訊；先嘗試解鎖，失敗則回退 TTS，避免開場語音中斷初始化
+        try { await window.audioPlayer?.unlockAudio?.(); } catch (_) {}
+        try {
+          await speak(introText, "login_button_intro");
+        } catch (_) {
+          await speak(introText);
+        }
+        await initLogin();
       });
 
       // 接收來自 Bridge 的控制訊號（例如：切換到練習畫面前，先把登入語音全部關閉）

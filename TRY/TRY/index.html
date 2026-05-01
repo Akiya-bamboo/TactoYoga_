@@ -14,6 +14,7 @@
     --primary: #f5ec57;
     --primaryText: #0a0a0a;
     --glow: 0 0 15px rgba(245, 236, 87, 0.25);
+    
   }
 
   * { box-sizing: border-box; }
@@ -55,6 +56,41 @@
     max-width: min(920px, calc(100% - 40px));
     color: var(--muted);
   }
+
+  #btnIOSRecover3 {
+        width: 100%;
+        margin-top: 14px;
+        padding: 16px 18px;
+        border-radius: 26px; /* 圓角矩形（20–30px） */
+        border: 2px solid rgba(255, 255, 255, 0.15);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        box-shadow: var(--glow);
+      }
+
+   #btnIOSRecover3 {
+    position: fixed;
+    left: 14px;
+    bottom: 14px;
+    z-index: 9999;
+    width: auto;
+    margin-top: 0;
+    padding: 10px 12px;
+    font-size: 13px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+  }
+
+   #btnIOSRecover3:focus {
+        outline: 3px solid var(--accent);
+        outline-offset: 3px;
+      }
+
 
   /* 影片與骨架畫布：置中顯示，鏡像翻轉 */
   video, canvas {
@@ -109,6 +145,7 @@
 <p id="hintText">登入與課前說明完成後，系統會自動切換到這個畫面並開始拜日式引導。</p>
 <!-- NEW: 手動成功／下一動作按鈕，預設關閉，僅作為偵測失敗時的備用機制 -->
 <button id="manualSuccessBtn" disabled>偵測成功／Next Pose</button>
+<a href="../../YO/YO/index.html"><button id="btnIOSRecover3" type="button">語音登入流程</button></a>
 
 <video id="video" autoplay playsinline width="640" height="480"></video>
 <canvas id="canvas" width="640" height="480"></canvas>
@@ -241,13 +278,37 @@ function getNoseY(lm) {
   return isVisible(n) ? n.y : (n ? n.y : null);
 }
 
+function getLeftSidePoints(lm, minVis = MIN_VISIBILITY) {
+  const ls = lm[11];
+  const lh = lm[23];
+  const lk = lm[25];
+  const la = lm[27];
+  const lw = lm[15];
+  return {
+    ls: isVisible(ls, minVis) ? ls : null,
+    lh: isVisible(lh, minVis) ? lh : null,
+    lk: isVisible(lk, minVis) ? lk : null,
+    la: isVisible(la, minVis) ? la : null,
+    lw: isVisible(lw, minVis) ? lw : null,
+  };
+}
+
+function simplePresenceCheck(lm) {
+  const leftShoulder = lm?.[11];
+  const leftHip = lm?.[23];
+  const hasShoulder = isVisible(leftShoulder, 0.5);
+  const hasHip = isVisible(leftHip, 0.5);
+  const ok = hasShoulder && hasHip;
+  return { ok, near: ok };
+}
+
 // ===== 拜日式狀態機 =====
-const STABLE_MS = 1500;           // 姿勢需穩定 1.5 秒才算完成（時間門檻）
+const STABLE_MS = 3500;           // 人體關鍵點穩定 3.5 秒即自動下一步
 const STABLE_FRAMES = 20;         // 姿勢需連續穩定約 20 幀才算成功
 const PROMPT_COOLDOWN = 3500;     // 同一姿勢語音間隔至少 3.5 秒
-const MIN_VISIBILITY = 0.6;       // 關鍵點最小可見度
+const MIN_VISIBILITY = 0.5;       // 關鍵點最小可見度（側面更寬鬆）
 const MANUAL_ENABLE_MS = 7000;   // 超過約 7 秒仍未成功時，可啟用手動成功按鈕
-const MIN_SUCCESS_DELAY_MS = 5000; // NEW：每個姿勢至少等待 5 秒才允許成功
+const MIN_SUCCESS_DELAY_MS = 0; // NEW：側面偵測改為以穩定秒數為主，不額外延遲
 const OK_LATCH_FRAMES = 5;         // NEW：Temporal smoothing，一旦 ok 就至少維持 5 幀
 
 const sunStates = [
@@ -293,21 +354,16 @@ const sunStates = [
     successAudios: ["wang1_022_guide"],
 
     check(landmarks) {
-      const l = landmarks;
-      const hipAngle = getHipAngle(l);
-      const kneeAngle = getKneeAngle(l);
-      const shY = getShoulderY(l);
-      const hipY = getHipY(l);
-      if (shY == null || hipY == null) return { ok: false, near: false };
-
-      // 前彎趨勢：肩膀低於髖部（y 大表示更低）
-      const foldTrend = shY > hipY + 0.02;
-      // 解剖學：前彎髖角度會「變小」（更折疊），所以用 hipAngle < 門檻
-      const hipOk = hipAngle != null ? hipAngle < 135 : false;
-      const kneeOk = kneeAngle != null ? kneeAngle < 170 : true; // 腿看不清時，不要直接卡死
-
-      const ok = foldTrend && (hipOk || kneeOk);
-      const near = (shY > hipY) || (hipAngle != null && hipAngle < 155);
+      const { ls, lh, lk, la } = getLeftSidePoints(landmarks);
+      if (!ls || !lh || !lk || !la) return { ok: false, near: false };
+      const hipAngle = angleBetweenPoints(ls, lh, lk);
+      const kneeAngle = angleBetweenPoints(lh, lk, la);
+      const foldTrend = ls.y > lh.y + 0.02;      // 肩比髖低（前彎）
+      const torsoForward = ls.z < lh.z - 0.02;   // 上身往前（用 z）
+      const hipFolded = hipAngle != null && hipAngle < 155;
+      const kneesSoft = kneeAngle == null ? true : kneeAngle < 178;
+      const ok = foldTrend && torsoForward && hipFolded && kneesSoft;
+      const near = (ls.y > lh.y) && (torsoForward || hipFolded);
       return { ok, near };
     }
   },
@@ -325,20 +381,14 @@ const sunStates = [
     successAudios: ["spine_033_guide"],
 
     check(landmarks) {
-      const l = landmarks;
-      const hipAngle = getHipAngle(l);
-      const shY = getShoulderY(l);
-      const hipY = getHipY(l);
-      const noseY = getNoseY(l);
-      if (shY == null || hipY == null) return { ok: false, near: false };
-
-      // 脊椎延伸趨勢：比前彎抬起（肩高於髖，或頭部相對抬高）
-      const lifted = shY < hipY - 0.01 || (noseY != null && noseY < shY);
-      // 脊椎延伸時髖仍折疊但比前彎「更開」：hipAngle 中等即可
-      const hipOk = hipAngle != null ? (hipAngle >= 105 && hipAngle <= 170) : false;
-
-      const ok = lifted && (hipOk || true);
-      const near = lifted || (hipAngle != null && hipAngle > 90);
+      const { ls, lh, lk } = getLeftSidePoints(landmarks);
+      if (!ls || !lh || !lk) return { ok: false, near: false };
+      const hipAngle = angleBetweenPoints(ls, lh, lk);
+      const lifted = ls.y <= lh.y + 0.02;        // 肩不再明顯低於髖
+      const spineLong = hipAngle != null && hipAngle >= 135;
+      const zNotCollapsed = Math.abs(ls.z - lh.z) < 0.12;
+      const ok = lifted && spineLong && zNotCollapsed;
+      const near = lifted && (spineLong || zNotCollapsed);
       return { ok, near };
     }
   },
@@ -385,17 +435,16 @@ const sunStates = [
     successAudios: ["down_dog_055_guide"],
 
     check(landmarks) {
-      const l = landmarks;
-      // 下犬式：改以「髖部角度」與「髖高度」為主（低頭時肩點不穩）
-      const hipAngle = getHipAngle(l);
-      const shY = getShoulderY(l);
-      const hipY = getHipY(l);
-      if (hipAngle == null || shY == null || hipY == null) return { ok: false, near: false };
-
-      const hipsHigh = hipY < shY - 0.02;
-      // 下犬式 hipAngle 約 70~130（放寬）
-      const ok = hipsHigh && hipAngle >= 60 && hipAngle <= 140;
-      const near = hipsHigh && hipAngle >= 45 && hipAngle <= 160;
+      const { ls, lh, lk, la } = getLeftSidePoints(landmarks);
+      if (!ls || !lh || !lk || !la) return { ok: false, near: false };
+      const hipAngle = angleBetweenPoints(ls, lh, lk);
+      const kneeAngle = angleBetweenPoints(lh, lk, la);
+      const hipsHigh = lh.y < ls.y - 0.02;       // 髖高於肩
+      const legsLong = kneeAngle != null && kneeAngle > 145;
+      const torsoLegOpen = hipAngle != null && hipAngle >= 65 && hipAngle <= 155;
+      const zDepth = Math.abs(ls.z - la.z) > 0.06; // 身體有前後延展（z）
+      const ok = hipsHigh && legsLong && torsoLegOpen && zDepth;
+      const near = hipsHigh && (legsLong || torsoLegOpen);
       return { ok, near };
     }
   },
@@ -413,21 +462,17 @@ const sunStates = [
     successAudios: ["plank_066_guide"],
 
     check(landmarks) {
-      const l = landmarks;
-      const hipAngle = getHipAngle(l);
-      const kneeAngle = getKneeAngle(l);
-      const sh = pickPoint(l, 11, 12).p;
-      const wr = pickPoint(l, 15, 16).p;
-      if (!sh || !wr) return { ok: false, near: false };
-
-      // 趨勢：肩大致在手腕上方（x 接近）
-      const align = Math.abs(sh.x - wr.x) < 0.10;
-      // 平板：身體接近一直線 → hipAngle 越接近 180 越直
-      const straight = hipAngle != null ? hipAngle > 140 : false;
-      const kneesOk = kneeAngle != null ? kneeAngle > 150 : true;
-
-      const ok = align && straight && kneesOk;
-      const near = align || (hipAngle != null && hipAngle > 125);
+      const { ls, lh, lk, la, lw } = getLeftSidePoints(landmarks);
+      if (!ls || !lh || !lk || !la) return { ok: false, near: false };
+      const hipAngle = angleBetweenPoints(ls, lh, lk);
+      const kneeAngle = angleBetweenPoints(lh, lk, la);
+      const bodyLineY = Math.abs(ls.y - lh.y) < 0.11 && Math.abs(lh.y - lk.y) < 0.11;
+      const bodyLineZ = Math.abs(ls.z - lh.z) < 0.13 && Math.abs(lh.z - lk.z) < 0.13;
+      const hipsNotSagging = lh.y <= lk.y + 0.08;
+      const wristSupport = lw ? Math.abs(ls.y - lw.y) < 0.18 : true;
+      const straight = hipAngle != null && hipAngle > 145 && kneeAngle != null && kneeAngle > 150;
+      const ok = bodyLineY && bodyLineZ && hipsNotSagging && wristSupport && straight;
+      const near = (bodyLineY || bodyLineZ) && hipsNotSagging;
       return { ok, near };
     }
   },
@@ -445,15 +490,16 @@ const sunStates = [
     successAudios: ["snake_077_guide"],
 
     check(landmarks) {
-      const l = landmarks;
-      const hipAngle = getHipAngle(l);
-      const noseY = getNoseY(l);
-      const shY = getShoulderY(l);
-      if (shY == null) return { ok: false, near: false };
-
-      const chestLift = noseY != null ? (noseY < shY) : false;
-      const ok = chestLift && hipAngle != null && hipAngle >= 85 && hipAngle <= 175;
-      const near = chestLift || (hipAngle != null && hipAngle >= 70);
+      const { ls, lh, lk } = getLeftSidePoints(landmarks);
+      if (!ls || !lh || !lk) return { ok: false, near: false };
+      const nose = landmarks[0];
+      const hipAngle = angleBetweenPoints(ls, lh, lk);
+      const chestLift = ls.y < lh.y - 0.03;      // 肩抬高於髖
+      const headLift = isVisible(nose, MIN_VISIBILITY) ? nose.y < ls.y + 0.03 : true;
+      const backArc = hipAngle != null && hipAngle >= 95;
+      const zOpen = ls.z < lh.z - 0.02;          // 胸口前開（z）
+      const ok = chestLift && headLift && backArc && zOpen;
+      const near = chestLift && (backArc || zOpen);
       return { ok, near };
     }
   },
@@ -639,13 +685,13 @@ async function onPoseState(landmarks) {
   // NEW：語音引導未結束前，不進行姿勢檢測
   if (!allowPoseCheck) return;
 
-  // NEW：若關鍵下肢關節尚未清楚出現在畫面中，不判斷姿勢
-  const kneesAnkles = [25, 26, 27, 28]; // 左右膝蓋與腳踝
-  const hasAllLegPoints = kneesAnkles.every(i => {
-    const p = landmarks[i];
-    return p && typeof p.visibility === "number" && p.visibility >= MIN_VISIBILITY;
-  });
-  if (!hasAllLegPoints) {
+  // 側面快速模式：只要左肩與左髖穩定可見才進入計時
+  const leftShoulder = landmarks[11];
+  const leftHip = landmarks[23];
+  const hasCorePoints =
+    isVisible(leftShoulder, 0.5) &&
+    isVisible(leftHip, 0.5);
+  if (!hasCorePoints) {
     stableSince = null;
     stableFrameCount = 0;
     return;
@@ -655,7 +701,8 @@ async function onPoseState(landmarks) {
   const state = sunStates[currentIndex];
   if (!state) return;
 
-  const checked = state.check(landmarks);
+  // 所有姿勢統一簡化為「人體存在檢查」
+  const checked = simplePresenceCheck(landmarks);
   let ok = !!checked.ok;
   const near = !!checked.near;
 
@@ -705,7 +752,7 @@ async function onPoseState(landmarks) {
   }
 
   if (ok) {
-    // 姿勢已達成，檢查穩定時間與連續影格數 // MOD
+    // 姿勢已達成：開始/持續穩定計時，達到門檻才自動成功 // MOD
     if (stableSince == null) {
       stableSince = now;
       stableFrameCount = 0;
@@ -717,11 +764,10 @@ async function onPoseState(landmarks) {
     if (
       stateCheckUnlocked &&                    // NEW：本姿勢 guide 已結束
       stateEnteredAt != null &&
-      now - stateEnteredAt >= MIN_SUCCESS_DELAY_MS && // NEW：至少經過 5 秒
-      heldMs >= STABLE_MS &&
-      stableFrameCount >= STABLE_FRAMES
+      now - stateEnteredAt >= MIN_SUCCESS_DELAY_MS && // 側面流程目前設為 0，僅看穩定持續時間
+      heldMs >= STABLE_MS
     ) {
-      // 達到時間與影格雙重門檻時，視為自動成功 // MOD
+      // 達到穩定時間門檻後，視為自動成功 // MOD
       await completeCurrentState("auto");
       return;
     }

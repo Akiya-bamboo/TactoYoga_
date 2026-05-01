@@ -15,11 +15,21 @@
    */
   const VOICE_MAP = {
     // 登入／引導
-    login_sign_intro: "sign.mp3",//註冊
+    login_sign_intro: "sign.mp3",//註冊,重錄體重自動偵測
     login_button_intro: "welcome.mp3",//歡迎來到tacto yoga
+
+    login_faceno:"faceno.mp3",//未辨識到臉部暱稱登入
+    login_facenoo:"facenoo.mp3",//未辨識到臉部註冊
+    login_face:"face.mp3",//正在辨識臉部轉向鏡頭
+    login_faceok:"faceok.mp3",//辨識成功登入
+    login_faceokk:"faceokk.mp3",//辨識成功註冊
+
+    login_kga:"kga.mp3",//以為您自動偵測體重
+    login_kgb:"kgb.mp3",//目前偵測到
+
     login_one_intro: "one.mp3",//步驟1
     login_two_intro: "two.mp3",//步驟2
-    login_three_intro: "three.mp3",//步驟3
+    login_three_intro: "three.mp3",//步驟3,需要改OR新增新版自動偵測
     login_name_intro: "name.mp3",//我聽到的暱稱是
     login_reconf_intro: "retryconfirm.mp3",//正確請說確認；重來請說重來
     login_tall_intro: "tall.mp3",//身高
