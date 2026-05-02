@@ -120,6 +120,21 @@
         color: #fff;
       }
 
+      #btnIOSRecoverCamera {
+        position: fixed;
+        left: 14px;
+        bottom: 116px;
+        z-index: 9999;
+        width: auto;
+        margin-top: 0;
+        padding: 10px 12px;
+        font-size: 13px;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        background: rgba(0, 0, 0, 0.55);
+        color: #fff;
+      }
+
       #btnIOSRecover2 {
         position: fixed;
         left: 14px;
@@ -239,7 +254,8 @@
         </button>
         <button id="btnFaceLogin" type="button">人臉辨識登入（鏡頭）</button>
         <button id="btnBindFace" type="button">綁定目前登入帳號人臉</button>
-        <button id="btnIOSRecover" type="button">語音播放</button>
+        <button id="btnIOSRecover" type="button">語音播放＋麥克風</button>
+        <button id="btnIOSRecoverCamera" type="button">語音播放＋開鏡頭</button>
         <a href="../../TRY/TRY/index.html"><button id="btnIOSRecover2" type="button">姿態辨識流程</button></a>
 
         <div class="status" aria-label="狀態資訊（視覺輔助用）">
@@ -764,6 +780,7 @@
       const btnFaceLogin = document.getElementById("btnFaceLogin");
       const btnBindFace = document.getElementById("btnBindFace");
       const btnIOSRecover = document.getElementById("btnIOSRecover");
+      const btnIOSRecoverCamera = document.getElementById("btnIOSRecoverCamera");
       const statusText = document.getElementById("statusText");
       const transcriptText = document.getElementById("transcriptText");
       const live = document.getElementById("live");
@@ -1742,7 +1759,7 @@
       });
 
       btnIOSRecover.addEventListener("click", async () => {
-        // iPad Safari 備援：用使用者手勢主動解鎖音訊與麥克風流程，再重播上一段語音
+        // iPad Safari 備援（麥克風）：重播上一段語音後重新聆聽
         try { await window.audioPlayer?.unlockAudio?.(); } catch (_) {}
         try { recognition = recognition || createRecognition(); } catch (_) {}
         if (lastSpokenText) {
@@ -1750,16 +1767,22 @@
         } else {
           await speak("已重新啟動語音，請再說一次。");
         }
-        // 若先前卡在人臉流程，手動補播後繼續原流程（先播語音再開鏡頭）
-        if (pendingRecoverAction === "face_login") {
-          await detectFaceThenLogin();
-          return;
+        startListening({ auto: true });
+      });
+
+      btnIOSRecoverCamera.addEventListener("click", async () => {
+        // iPad Safari 備援（鏡頭）：重播上一段語音後再開鏡頭辨識
+        try { await window.audioPlayer?.unlockAudio?.(); } catch (_) {}
+        if (lastSpokenText) {
+          await speak(lastSpokenText, lastSpokenKey);
+        } else {
+          await speak("已重新啟動鏡頭辨識流程。");
         }
-        if (pendingRecoverAction === "face_register") {
+        if (pendingRecoverAction === "face_register" || appPhase === PHASE.REGISTER) {
           await detectFaceThenRegister();
           return;
         }
-        startListening({ auto: true });
+        await detectFaceThenLogin();
       });
 
       // 載入後初始化使用者列表（localStorage 若為空會建立預設「小安」），並語音引導登入
