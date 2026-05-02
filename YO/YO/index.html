@@ -594,8 +594,25 @@
         }
       }
 
+      async function warmupCameraByGesture() {
+        // iPad Safari: 先在手勢事件中暖啟鏡頭，可提高後續辨識成功率
+        if (!navigator.mediaDevices?.getUserMedia) return false;
+        let stream = null;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+          faceVideo.srcObject = stream;
+          await faceVideo.play();
+          return true;
+        } catch (_) {
+          return false;
+        } finally {
+          await stopFaceStream(stream);
+        }
+      }
+
       async function detectFaceThenLogin() {
         pendingRecoverAction = "face_login";
+        lastFaceFlowIntent = "login";
         if (faceAuthBusy) {
           await startVoiceNicknameLogin("未辨識到臉部，將進入語音暱稱登入流程", "login_faceno");//語音新增處2
           return;
@@ -646,6 +663,7 @@
 
       async function detectFaceThenRegister() {
         pendingRecoverAction = "face_register";
+        lastFaceFlowIntent = "register";
         if (faceAuthBusy) return null;
         faceAuthBusy = true;
         stopListening();
@@ -804,6 +822,7 @@
       let lastSpokenText = "";
       let lastSpokenKey = null;
       let pendingRecoverAction = null; // "face_login" | "face_register" | null
+      let lastFaceFlowIntent = "login"; // "login" | "register"
 
       // 註冊資料（不做永久儲存）
       const profile = {
@@ -1210,10 +1229,12 @@
         // 入口：說「開始」進入暱稱登入；說「註冊」進入註冊；說「刪除登入帳號」進入語音刪除
         if (appPhase === PHASE.GATE) {
           if (normalized.includes(WORD_START)) {
+            lastFaceFlowIntent = "login";
             await detectFaceThenLogin();
             return;
           }
           if (normalized.includes(WORD_REGISTER)) {
+            lastFaceFlowIntent = "register";
             await detectFaceThenRegister();
             return;
           }
@@ -1778,7 +1799,8 @@
         } else {
           await speak("已重新啟動鏡頭辨識流程。");
         }
-        if (pendingRecoverAction === "face_register" || appPhase === PHASE.REGISTER) {
+        await warmupCameraByGesture();
+        if (pendingRecoverAction === "face_register" || appPhase === PHASE.REGISTER || lastFaceFlowIntent === "register") {
           await detectFaceThenRegister();
           return;
         }
