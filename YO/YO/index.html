@@ -664,31 +664,42 @@
       async function detectFaceThenRegister() {
         pendingRecoverAction = "face_register";
         lastFaceFlowIntent = "register";
-        if (faceAuthBusy) return null;
+        if (faceAuthBusy) {
+          await startVoiceRegister("未辨識到臉部，將進入語音流程", "login_facenoo");
+          return null;
+        }
         faceAuthBusy = true;
         stopListening();
+        let routed = false;
         try {
           setStatus("正在啟動鏡頭進行臉部偵測（註冊）。");
           await speak(`正在辨識您的臉部，請面向鏡頭`,"login_face");////語音新增處1
           const modelReady = await ensureFaceModels();
           if (!modelReady) {
+            routed = true;
             await startVoiceRegister("未辨識到臉部，將進入語音流程", "login_facenoo");//語音新增處4
             return null;
           }
           const captured = await detectSingleFaceWithTimeout(5000);
           if (!captured.ok) {
+            routed = true;
             await startVoiceRegister("未辨識到臉部，將進入語音流程", "login_facenoo");//語音新增處4
             return null;
           }
           await speak(`辨識成功，請開始註冊`,"login_faceokk");////語音新增處
           pendingRecoverAction = null;
+          routed = true;
           await startVoiceRegister();
           return true;
         } catch (_) {
+          routed = true;
           await startVoiceRegister("未辨識到臉部，將進入語音流程", "login_facenoo");//語音新增處4
           return null;
         } finally {
           faceAuthBusy = false;
+          if (!routed) {
+            await startVoiceRegister("未辨識到臉部，將進入語音流程", "login_facenoo");
+          }
         }
       }
 
