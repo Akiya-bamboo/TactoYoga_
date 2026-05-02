@@ -491,18 +491,6 @@
         faceVideo.srcObject = null;
       }
 
-      async function openFaceCameraOnlyStream() {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user" },
-          audio: false,
-        });
-        // 保險：若裝置仍回傳 audio track，立即關閉，避免誤開麥克風
-        try {
-          stream.getAudioTracks().forEach((t) => t.stop());
-        } catch (_) {}
-        return stream;
-      }
-
       async function captureFaceDescriptorWithTimeout(timeoutMs = 9000) {
         if (!navigator.mediaDevices?.getUserMedia) {
           return { ok: false, reason: "camera_not_supported" };
@@ -510,7 +498,8 @@
 
         let stream = null;
         try {
-          stream = await openFaceCameraOnlyStream();
+          await primeMediaPermissions({ needCamera: true });
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
           faceVideo.srcObject = stream;
           await faceVideo.play();
 
@@ -570,7 +559,8 @@
         }
         let stream = null;
         try {
-          stream = await openFaceCameraOnlyStream();
+          await primeMediaPermissions({ needCamera: true });
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
           faceVideo.srcObject = stream;
           await faceVideo.play();
 
@@ -794,6 +784,8 @@
       let faceAuthBusy = false;
       let lastSpokenText = "";
       let lastSpokenKey = null;
+      let micPermissionReady = false;
+      let avPermissionReady = false;
 
       // 註冊資料（不做永久儲存）
       const profile = {
@@ -957,6 +949,31 @@
         isSpeaking = false;
       }
 
+      async function primeMediaPermissions({ needCamera = false } = {}) {
+        if (!navigator.mediaDevices?.getUserMedia) return false;
+        if (needCamera && avPermissionReady) return true;
+        if (!needCamera && micPermissionReady) return true;
+        let stream = null;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: needCamera ? { facingMode: "user" } : false,
+          });
+          try { stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+          if (needCamera) {
+            avPermissionReady = true;
+            micPermissionReady = true;
+          } else {
+            micPermissionReady = true;
+          }
+          return true;
+        } catch (_) {
+          return false;
+        } finally {
+          try { stream?.getTracks?.().forEach((t) => t.stop()); } catch (_) {}
+        }
+      }
+
       function hasRegisteredUsers() {
         return Object.keys(getUsers()).length > 0;
       }
@@ -1080,7 +1097,7 @@
         return r;
       }
 
-      function startListening({ auto }) {
+      async function startListening({ auto }) {
         if (!supportsSpeechRecognition()) {
           setStatus("此瀏覽器不支援語音辨識。");
           void speak(
@@ -1089,6 +1106,7 @@
           return;
         }
         if (isListening || isSpeaking) return;
+        await primeMediaPermissions({ needCamera: false });
 
         try {
           if (!recognition) recognition = createRecognition();
@@ -1751,6 +1769,8 @@
       btnIOSRecover.addEventListener("click", async () => {
         // iPad Safari 備援：用使用者手勢主動解鎖音訊與麥克風流程，再重播上一段語音
         try { await window.audioPlayer?.unlockAudio?.(); } catch (_) {}
+        // 在登入/註冊入口階段，手動按鈕同時預熱鏡頭+麥克風；其他情況僅預熱麥克風
+        await primeMediaPermissions({ needCamera: appPhase === PHASE.GATE });
         try { recognition = recognition || createRecognition(); } catch (_) {}
         if (lastSpokenText) {
           await speak(lastSpokenText, lastSpokenKey);
