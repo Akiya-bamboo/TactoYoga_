@@ -579,6 +579,7 @@
       }
 
       async function detectFaceThenLogin() {
+        pendingRecoverAction = "face_login";
         if (faceAuthBusy) {
           await startVoiceNicknameLogin("未辨識到臉部，將進入語音暱稱登入流程", "login_faceno");//語音新增處2
           return;
@@ -614,6 +615,7 @@
           const nickname = getLatestNicknameForLogin();
           await speak(`辨識成功，正在為您登入`,"login_faceok");////語音新增處
           routed = true;
+          pendingRecoverAction = null;
           await loginSuccess(nickname);
         } catch (_) {
           routed = true;
@@ -627,6 +629,7 @@
       }
 
       async function detectFaceThenRegister() {
+        pendingRecoverAction = "face_register";
         if (faceAuthBusy) return null;
         faceAuthBusy = true;
         stopListening();
@@ -644,6 +647,7 @@
             return null;
           }
           await speak(`辨識成功，請開始註冊`,"login_faceokk");////語音新增處
+          pendingRecoverAction = null;
           await startVoiceRegister();
           return true;
         } catch (_) {
@@ -782,6 +786,7 @@
       let faceAuthBusy = false;
       let lastSpokenText = "";
       let lastSpokenKey = null;
+      let pendingRecoverAction = null; // "face_login" | "face_register" | null
 
       // 註冊資料（不做永久儲存）
       const profile = {
@@ -854,14 +859,6 @@
         pitch: 0.50,   //音高
         volume: 0.85, //音量
       };
-      // iPad Safari: MP3 超時保護（可依內容長度調整）
-      const MP3_TIMEOUT_CONFIG = {
-        shortTextMaxChars: 20,
-        mediumTextMaxChars: 60,
-        shortMs: 4500,
-        mediumMs: 7000,
-        longMs: 11000,
-      };
 
       let cachedPreferredVoice = null;
 
@@ -889,7 +886,17 @@
         };
       }
 
-      function speakByTTS(text) {
+      function speak(text, key) {
+        lastSpokenText = String(text || "");
+        lastSpokenKey = key || null;
+        // 若有指定 key 且已載入 audioPlayer，優先走錄音檔
+        if (key && window.audioPlayer && typeof window.playVoice === "function") {
+          isSpeaking = true;
+          return window.playVoice(key, { fallbackText: text }).finally(() => {
+            isSpeaking = false;
+          });
+        }
+
         // 動態內容無音檔，使用 TTS；取消佇列中尚未朗讀的內容，避免堆疊
         window.speechSynthesis.cancel();
 
@@ -917,42 +924,6 @@
 
           window.speechSynthesis.speak(utter);
         });
-      }
-
-      function getMp3TimeoutMs(text) {
-        const len = String(text || "").trim().length;
-        if (len <= MP3_TIMEOUT_CONFIG.shortTextMaxChars) return MP3_TIMEOUT_CONFIG.shortMs;
-        if (len <= MP3_TIMEOUT_CONFIG.mediumTextMaxChars) return MP3_TIMEOUT_CONFIG.mediumMs;
-        return MP3_TIMEOUT_CONFIG.longMs;
-      }
-
-      async function speak(text, key) {
-        lastSpokenText = String(text || "");
-        lastSpokenKey = key || null;
-        // 若有指定 key 且已載入 audioPlayer，優先走錄音檔
-        if (key && window.audioPlayer && typeof window.playVoice === "function") {
-          isSpeaking = true;
-          let timeoutId = null;
-          try {
-            const timeoutMs = getMp3TimeoutMs(text);
-            await Promise.race([
-              window.playVoice(key, { fallbackText: text }),
-              new Promise((_, reject) => {
-                timeoutId = window.setTimeout(() => reject(new Error("mp3_timeout")), timeoutMs);
-              }),
-            ]);
-            return;
-          } catch (_) {
-            // mp3 播放失敗或卡住時，自動 fallback TTS，並讓後續程式繼續執行
-            await speakByTTS(text);
-            return;
-          } finally {
-            if (timeoutId != null) window.clearTimeout(timeoutId);
-            isSpeaking = false;
-          }
-        }
-
-        await speakByTTS(text);
       }
 
       function stopListening() {
@@ -1778,6 +1749,15 @@
           await speak(lastSpokenText, lastSpokenKey);
         } else {
           await speak("已重新啟動語音，請再說一次。");
+        }
+        // 若先前卡在人臉流程，手動補播後繼續原流程（先播語音再開鏡頭）
+        if (pendingRecoverAction === "face_login") {
+          await detectFaceThenLogin();
+          return;
+        }
+        if (pendingRecoverAction === "face_register") {
+          await detectFaceThenRegister();
+          return;
         }
         startListening({ auto: true });
       });
