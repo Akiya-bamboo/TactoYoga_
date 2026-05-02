@@ -498,8 +498,7 @@
 
         let stream = null;
         try {
-          await primeMediaPermissions({ needCamera: true });
-          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
           faceVideo.srcObject = stream;
           await faceVideo.play();
 
@@ -559,8 +558,7 @@
         }
         let stream = null;
         try {
-          await primeMediaPermissions({ needCamera: true });
-          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: true });
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
           faceVideo.srcObject = stream;
           await faceVideo.play();
 
@@ -784,8 +782,6 @@
       let faceAuthBusy = false;
       let lastSpokenText = "";
       let lastSpokenKey = null;
-      let micPermissionReady = false;
-      let avPermissionReady = false;
 
       // 註冊資料（不做永久儲存）
       const profile = {
@@ -858,6 +854,14 @@
         pitch: 0.50,   //音高
         volume: 0.85, //音量
       };
+      // iPad Safari: MP3 超時保護（可依內容長度調整）
+      const MP3_TIMEOUT_CONFIG = {
+        shortTextMaxChars: 20,
+        mediumTextMaxChars: 60,
+        shortMs: 4500,
+        mediumMs: 7000,
+        longMs: 11000,
+      };
 
       let cachedPreferredVoice = null;
 
@@ -885,17 +889,7 @@
         };
       }
 
-      function speak(text, key) {
-        lastSpokenText = String(text || "");
-        lastSpokenKey = key || null;
-        // 若有指定 key 且已載入 audioPlayer，優先走錄音檔
-        if (key && window.audioPlayer && typeof window.playVoice === "function") {
-          isSpeaking = true;
-          return window.playVoice(key, { fallbackText: text }).finally(() => {
-            isSpeaking = false;
-          });
-        }
-
+      function speakByTTS(text) {
         // 動態內容無音檔，使用 TTS；取消佇列中尚未朗讀的內容，避免堆疊
         window.speechSynthesis.cancel();
 
@@ -925,6 +919,42 @@
         });
       }
 
+      function getMp3TimeoutMs(text) {
+        const len = String(text || "").trim().length;
+        if (len <= MP3_TIMEOUT_CONFIG.shortTextMaxChars) return MP3_TIMEOUT_CONFIG.shortMs;
+        if (len <= MP3_TIMEOUT_CONFIG.mediumTextMaxChars) return MP3_TIMEOUT_CONFIG.mediumMs;
+        return MP3_TIMEOUT_CONFIG.longMs;
+      }
+
+      async function speak(text, key) {
+        lastSpokenText = String(text || "");
+        lastSpokenKey = key || null;
+        // 若有指定 key 且已載入 audioPlayer，優先走錄音檔
+        if (key && window.audioPlayer && typeof window.playVoice === "function") {
+          isSpeaking = true;
+          let timeoutId = null;
+          try {
+            const timeoutMs = getMp3TimeoutMs(text);
+            await Promise.race([
+              window.playVoice(key, { fallbackText: text }),
+              new Promise((_, reject) => {
+                timeoutId = window.setTimeout(() => reject(new Error("mp3_timeout")), timeoutMs);
+              }),
+            ]);
+            return;
+          } catch (_) {
+            // mp3 播放失敗或卡住時，自動 fallback TTS，並讓後續程式繼續執行
+            await speakByTTS(text);
+            return;
+          } finally {
+            if (timeoutId != null) window.clearTimeout(timeoutId);
+            isSpeaking = false;
+          }
+        }
+
+        await speakByTTS(text);
+      }
+
       function stopListening() {
         expectListening = false;
         try {
@@ -947,31 +977,6 @@
           window.audioPlayer?.stopAll();
         } catch (_) {}
         isSpeaking = false;
-      }
-
-      async function primeMediaPermissions({ needCamera = false } = {}) {
-        if (!navigator.mediaDevices?.getUserMedia) return false;
-        if (needCamera && avPermissionReady) return true;
-        if (!needCamera && micPermissionReady) return true;
-        let stream = null;
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-            video: needCamera ? { facingMode: "user" } : false,
-          });
-          try { stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
-          if (needCamera) {
-            avPermissionReady = true;
-            micPermissionReady = true;
-          } else {
-            micPermissionReady = true;
-          }
-          return true;
-        } catch (_) {
-          return false;
-        } finally {
-          try { stream?.getTracks?.().forEach((t) => t.stop()); } catch (_) {}
-        }
       }
 
       function hasRegisteredUsers() {
@@ -1097,7 +1102,7 @@
         return r;
       }
 
-      async function startListening({ auto }) {
+      function startListening({ auto }) {
         if (!supportsSpeechRecognition()) {
           setStatus("此瀏覽器不支援語音辨識。");
           void speak(
@@ -1106,7 +1111,6 @@
           return;
         }
         if (isListening || isSpeaking) return;
-        await primeMediaPermissions({ needCamera: false });
 
         try {
           if (!recognition) recognition = createRecognition();
@@ -1769,8 +1773,6 @@
       btnIOSRecover.addEventListener("click", async () => {
         // iPad Safari 備援：用使用者手勢主動解鎖音訊與麥克風流程，再重播上一段語音
         try { await window.audioPlayer?.unlockAudio?.(); } catch (_) {}
-        // 在登入/註冊入口階段，手動按鈕同時預熱鏡頭+麥克風；其他情況僅預熱麥克風
-        await primeMediaPermissions({ needCamera: appPhase === PHASE.GATE });
         try { recognition = recognition || createRecognition(); } catch (_) {}
         if (lastSpokenText) {
           await speak(lastSpokenText, lastSpokenKey);
